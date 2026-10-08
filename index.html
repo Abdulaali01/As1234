@@ -229,11 +229,24 @@ body{background:var(--bg);color:var(--ink);font-family:"Tajawal","Cairo",system-
 #tab4 .ft-rh .rep{flex:1;min-width:0;font-weight:800;direction:ltr;text-align:right;word-break:break-all}
 #tab4 .rowdel{border:0;background:none;color:var(--danger);font:inherit;font-size:.85rem;font-weight:700;cursor:pointer;flex:0 0 auto}
 #tab4 .rowdel.armed{background:var(--danger);color:#fff;border-radius:8px;padding:3px 8px}
-#tab4 .ft-cells{display:grid;grid-template-columns:1fr 1fr}
-@media(max-width:700px){#tab4 .ft-cells{grid-template-columns:1fr}}
-#tab4 .ft-cell{padding:10px 12px;display:flex;flex-direction:column;gap:8px;min-width:0}
-#tab4 .ft-cell + .ft-cell{border-inline-start:1px solid var(--border)}
-@media(max-width:700px){#tab4 .ft-cell + .ft-cell{border-inline-start:0;border-top:1px solid var(--border)}}
+#tab4 .ft-col{display:flex;flex-direction:column;gap:10px;padding:12px;max-width:640px;margin:0 auto;width:100%;box-sizing:border-box}
+#tab4 .ft-arrow{display:flex;flex-direction:column;align-items:center;gap:2px;color:#1f3b4d}
+#tab4 .ft-arrow .lbl{background:#e8eef2;color:#1f3b4d;border-radius:999px;padding:3px 12px;font-size:.85rem;font-weight:700;font-variant-numeric:tabular-nums}
+#tab4 .ft-arrow .ar{font-size:1.6rem;line-height:1}
+#tab4 .fp-big{position:relative;border-radius:10px;overflow:hidden;background:#f1f3f2;border:1px solid var(--border)}
+#tab4 .fp-big img{display:block;width:100%;max-height:480px;object-fit:contain;cursor:pointer;background:#111}
+#tab4 .fp-big .idx{position:absolute;top:8px;right:8px;width:28px;height:28px;border-radius:50%;background:#1f3b4d;color:#fff;display:grid;place-items:center;font-weight:800;font-size:.85rem}
+#tab4 .fp-big .x{position:absolute;top:8px;left:8px;height:28px;min-width:28px;border-radius:999px;border:0;background:rgba(0,0,0,.65);color:#fff;font:inherit;font-size:.8rem;cursor:pointer;padding:0 8px}
+#tab4 .fp-big .x.armed{background:var(--danger)}
+#tab4 .fp-big .cap{padding:6px 10px;font-size:.78rem;direction:ltr;text-align:left;font-variant-numeric:tabular-nums;color:var(--ink);background:var(--surface)}
+#tab4 .ft-col > .addph{aspect-ratio:auto;padding:14px;width:100%}
+#tab4 .ft-sum{display:flex;flex-direction:column;gap:10px;margin-top:6px;border:2px solid #1f3b4d;border-radius:12px;padding:10px}
+#tab4 .ft-sum .stats{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+#tab4 .ft-sum .st{background:var(--surface-2);border-radius:10px;padding:8px 10px;display:flex;flex-direction:column;gap:2px}
+#tab4 .ft-sum .st .k{font-size:.78rem;color:var(--muted)}
+#tab4 .ft-sum .st .v{font-size:1.1rem;font-variant-numeric:tabular-nums}
+#tab4 .ft-sum .plot{width:100%;height:auto;border-radius:8px;max-width:100%}
+#tab4 .ft-sum .note{margin:0;font-size:.8rem;color:var(--muted);line-height:1.6}
 #tab4 .ft-ch{background:#1f3b4d;color:#fff;border-radius:8px;padding:7px 10px;font-weight:700;font-size:.88rem;text-align:center}
 #tab4 .merged{position:relative;cursor:pointer;display:block;width:100%;border:0;padding:0;background:none}
 #tab4 .merged img{width:100%;max-height:420px;object-fit:contain;border-radius:8px;background:#f1f3f2;display:block}
@@ -2275,6 +2288,65 @@ async function insert(items){
   return { added, updated };
 }
 
+// ---------- حسابات الموقع: المسافة والمساحة ----------
+const R = 6371008.8;
+function dist(a, b){
+  if (a.lat == null || b.lat == null) return null;
+  const toR = Math.PI / 180, dLat = (b.lat - a.lat) * toR, dLon = (b.lon - a.lon) * toR;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * toR) * Math.cos(b.lat * toR) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+const fmtNum = (n, d) => Number(n).toLocaleString('en-US', { maximumFractionDigits: d == null ? (n < 10 ? 1 : 0) : d });
+const fmtM = m => m >= 1000 ? `${fmtNum(m / 1000, 2)} كم` : `${fmtNum(m, m < 10 ? 1 : 0)} م`;
+function hull(pts){
+  const p = pts.slice().sort((a, b) => a.x - b.x || a.y - b.y);
+  if (p.length < 3) return p;
+  const cr = (o, a, b) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+  const lo = [], up = [];
+  for (const q of p){ while (lo.length >= 2 && cr(lo[lo.length - 2], lo[lo.length - 1], q) <= 0) lo.pop(); lo.push(q); }
+  for (let i = p.length - 1; i >= 0; i--){ const q = p[i]; while (up.length >= 2 && cr(up[up.length - 2], up[up.length - 1], q) <= 0) up.pop(); up.push(q); }
+  up.pop(); lo.pop(); return lo.concat(up);
+}
+// المساحة = مساحة المضلع الذي يحيط بكل نقاط الصور (بالمتر المربع)
+function summary(photos){
+  const g = photos.filter(p => p.lat != null), out = { total: photos.length, withGps: g.length, path: 0, area: null, per100: null, pts: [], hull: [], note: '' };
+  for (let i = 1; i < g.length; i++) out.path += dist(g[i - 1], g[i]);
+  if (g.length){
+    const lat0 = g.reduce((s, p) => s + p.lat, 0) / g.length, lon0 = g.reduce((s, p) => s + p.lon, 0) / g.length, k = Math.PI / 180;
+    out.pts = g.map(p => ({ x: (p.lon - lon0) * k * R * Math.cos(lat0 * k), y: (p.lat - lat0) * k * R, n: photos.indexOf(p) + 1 }));
+    out.hull = hull(out.pts);
+  }
+  const accs = g.filter(p => p.acc != null).map(p => p.acc), avgAcc = accs.length ? accs.reduce((s, a) => s + a, 0) / accs.length : null;
+  if (out.hull.length >= 3){
+    let a = 0; for (let i = 0; i < out.hull.length; i++){ const p = out.hull[i], q = out.hull[(i + 1) % out.hull.length]; a += p.x * q.y - q.x * p.y; }
+    out.area = Math.abs(a) / 2;
+    if (out.area >= 1) out.per100 = g.length / out.area * 100;
+    out.note = 'المساحة محسوبة من الشكل الذي يحيط بكل نقاط التصوير.' + (avgAcc != null ? ` متوسط دقة GPS ±${Math.round(avgAcc)} م، فالأرقام تقريبية.` : '');
+  } else {
+    out.note = g.length < 3 ? 'تحتاج 3 صور على الأقل بإحداثيات من أماكن مختلفة لحساب المساحة.' : 'النقاط على خط واحد تقريباً، لا توجد مساحة.';
+  }
+  return out;
+}
+// رسم مخطط صغير لمواقع الصور
+function drawPlot(c, sm, cs, colors){
+  const x = c.getContext('2d'), W = c.width, H = c.height, pad = 40;
+  const col = colors || { bg: cs.getPropertyValue('--surface-2').trim() || '#eef1ee', ink: cs.getPropertyValue('--ink').trim() || '#152420', acc: '#1f3b4d', fill: 'rgba(31,157,85,.18)', line: '#1f9d55' };
+  x.fillStyle = col.bg; x.fillRect(0, 0, W, H);
+  const xs = sm.pts.map(p => p.x), ys = sm.pts.map(p => p.y);
+  const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
+  const span = Math.max(maxX - minX, maxY - minY, 4), s = Math.min((W - pad * 2), (H - pad * 2)) / span;
+  const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2, P = p => [W / 2 + (p.x - cx) * s, H / 2 - (p.y - cy) * s];
+  if (sm.hull.length >= 3){ x.beginPath(); sm.hull.forEach((p, i) => { const [a, b] = P(p); i ? x.lineTo(a, b) : x.moveTo(a, b); }); x.closePath(); x.fillStyle = col.fill; x.fill(); x.strokeStyle = col.line; x.lineWidth = 2; x.stroke(); }
+  x.setLineDash([6, 5]); x.strokeStyle = col.acc; x.lineWidth = 1.5; x.beginPath();
+  sm.pts.forEach((p, i) => { const [a, b] = P(p); i ? x.lineTo(a, b) : x.moveTo(a, b); }); x.stroke(); x.setLineDash([]);
+  x.font = 'bold 15px Cairo, Tahoma, sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle';
+  sm.pts.forEach(p => { const [a, b] = P(p); x.fillStyle = col.acc; x.beginPath(); x.arc(a, b, 12, 0, Math.PI * 2); x.fill(); x.fillStyle = '#fff'; x.fillText(String(p.n), a, b + 1); });
+  // مقياس الرسم
+  const nice = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000].find(v => v * s >= 50) || 1000;
+  x.strokeStyle = col.ink; x.fillStyle = col.ink; x.lineWidth = 2; x.beginPath(); x.moveTo(pad, H - 18); x.lineTo(pad + nice * s, H - 18); x.stroke();
+  x.font = '13px Tahoma, sans-serif'; x.fillText(`${nice} م`, pad + nice * s / 2, H - 30);
+}
+
 // ---------- عرض الجدول ----------
 function armed(btn, label, fn){
   if (btn.dataset.armed){ fn(); return; }
@@ -2292,34 +2364,56 @@ function render(){
     rd.onclick = () => armed(rd, 'تأكيد الحذف؟', async () => { rows.splice(rows.indexOf(r), 1); await del(r.id); render(); });
     head.appendChild(rd);
 
-    const tdM = document.createElement('div'); tdM.className = 'ft-cell';
-    tdM.innerHTML = `<div class="ft-ch">${COL1}</div>`;
+    const col = document.createElement('div'); col.className = 'ft-col';
+    col.innerHTML = `<div class="ft-ch">${COL1}</div>`;
     const mb = document.createElement('button'); mb.type = 'button'; mb.className = 'merged';
     mb.innerHTML = '<img alt="الصورة المدموجة"><span class="cam-hint">📸 اضغط لالتقاط صور الموقع</span>';
     mb.querySelector('img').src = url(r.merged);
     mb.onclick = () => shoot(r);
-    tdM.appendChild(mb);
+    col.appendChild(mb);
 
-    const tdP = document.createElement('div'); tdP.className = 'ft-cell';
-    tdP.innerHTML = `<div class="ft-ch">${COL2}</div>`;
-    const g = document.createElement('div'); g.className = 'fphotos';
-    r.photos.forEach(p => {
-      const d = document.createElement('div'); d.className = 'fp';
+    if (r.photos.length){
+      const h2 = document.createElement('div'); h2.className = 'ft-ch'; h2.textContent = COL2; col.appendChild(h2);
+    }
+    r.photos.forEach((p, k) => {
+      // سهم بين الصور مع المسافة
+      const prev = k ? r.photos[k - 1] : null, d = prev ? dist(prev, p) : null;
+      const ar = document.createElement('div'); ar.className = 'ft-arrow';
+      ar.innerHTML = `<span class="lbl"></span><span class="ar">⬇</span>`;
+      ar.querySelector('.lbl').textContent = k === 0 ? `صورة الموقع 1` : (d != null ? `${fmtM(d)} من الصورة ${k}` : 'المسافة غير معروفة (صورة بدون إحداثيات)');
+      col.appendChild(ar);
+
       const ok = p.lat != null;
-      d.innerHTML = `<img alt=""><span class="ok ${ok ? '' : 'warn'}">${ok ? '✓' : '⚠'}</span><button type="button" class="x" aria-label="حذف الصورة">✕</button>`;
-      d.querySelector('img').src = url(p.blob);
-      d.onclick = e => { if (!e.target.classList.contains('x')) openLb(p.blob, (ok ? `X ${p.lon.toFixed(6)}, Y ${p.lat.toFixed(6)} · ` : '') + window.FieldCam.fmtTime(new Date(p.time))); };
-      const x = d.querySelector('.x');
+      const box = document.createElement('div'); box.className = 'fp-big';
+      box.innerHTML = `<span class="idx">${k + 1}</span><img alt=""><button type="button" class="x" aria-label="حذف الصورة">✕</button><div class="cap"></div>`;
+      box.querySelector('img').src = url(p.blob);
+      box.querySelector('.cap').textContent = (ok ? `✓ X ${p.lon.toFixed(6)}, Y ${p.lat.toFixed(6)}` + (p.acc != null ? ` (±${Math.round(p.acc)}m)` : '') : '⚠ بدون إحداثيات') + ' · ' + window.FieldCam.fmtTime(new Date(p.time));
+      box.querySelector('img').onclick = () => openLb(p.blob, box.querySelector('.cap').textContent);
+      const x = box.querySelector('.x');
       x.onclick = () => armed(x, 'حذف؟', async () => { r.photos.splice(r.photos.indexOf(p), 1); await save(r); render(); });
-      g.appendChild(d);
+      col.appendChild(box);
     });
-    const add = document.createElement('button'); add.type = 'button'; add.className = 'addph'; add.textContent = r.photos.length ? '＋ صور' : '📸 التقاط';
+    const add = document.createElement('button'); add.type = 'button'; add.className = 'addph'; add.textContent = r.photos.length ? '＋ إضافة صور موقع' : '📸 التقاط صور الموقع';
     add.onclick = () => shoot(r);
-    g.appendChild(add);
-    tdP.appendChild(g);
+    col.appendChild(add);
 
-    const cells = document.createElement('div'); cells.className = 'ft-cells'; cells.append(tdM, tdP);
-    tr.append(head, cells); tb.appendChild(tr);
+    // الملخص: المساحة وعدد الصور
+    const sm = summary(r.photos);
+    const sb = document.createElement('div'); sb.className = 'ft-sum';
+    sb.innerHTML = `<div class="ft-ch">ملخص الموقع</div><div class="stats"></div><canvas class="plot" width="600" height="360" aria-label="مخطط مواقع الصور"></canvas><p class="note"></p>`;
+    const stats = [
+      ['عدد صور الموقع', sm.total + (sm.withGps !== sm.total ? ` (بإحداثيات ${sm.withGps})` : '')],
+      ['المسافة الكلية بين الصور', sm.withGps >= 2 ? fmtM(sm.path) : '—'],
+      ['المساحة', sm.area != null ? `${fmtNum(sm.area)} م²` : '—'],
+      ['عدد الصور داخل كل 100 م²', sm.per100 != null ? fmtNum(sm.per100, 1) + ' صورة' : '—']
+    ];
+    stats.forEach(([k, v]) => { const d = document.createElement('div'); d.className = 'st'; d.innerHTML = '<span class="k"></span><b class="v"></b>'; d.querySelector('.k').textContent = k; d.querySelector('.v').textContent = v; sb.querySelector('.stats').appendChild(d); });
+    sb.querySelector('.note').textContent = sm.note;
+    const pc = sb.querySelector('.plot');
+    if (sm.pts.length >= 1) drawPlot(pc, sm, getComputedStyle(document.documentElement)); else pc.remove();
+    col.appendChild(sb);
+
+    tr.append(head, col); tb.appendChild(tr);
   });
   const n = rows.length, done = rows.filter(r => r.photos.length).length;
   $('ftCount').textContent = n ? `${n} صف · مكتمل بصور الموقع ${done}` : 'لا توجد صفوف';
@@ -2347,103 +2441,138 @@ $('ftClear').onclick = () => armed($('ftClear'), `تأكيد حذف ${rows.lengt
 
 // ---------- أدوات الرسم للتصدير ----------
 const loadImg = blob => new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url(blob); });
-function fit(ctx, img, x, y, w, h){
-  const iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height;
-  const s = Math.min(w / iw, h / ih), dw = iw * s, dh = ih * s;
-  ctx.drawImage(img, x + (w - dw) / 2, y + (h - dh) / 2, dw, dh);
-}
-// تجميع صور الموقع في صورة واحدة (شبكة)
-async function collage(photos, maxW){
-  const imgs = []; for (const p of photos) imgs.push(await loadImg(p.blob));
-  const n = imgs.length, cols = n <= 1 ? 1 : n <= 4 ? 2 : 3, rowsN = Math.ceil(n / cols);
-  const portrait = imgs.filter(i => i.naturalHeight >= i.naturalWidth).length >= n / 2;
-  const gap = 12, cw = Math.floor((maxW - gap * (cols + 1)) / cols), ch = Math.round(cw * (portrait ? 4 / 3 : 3 / 4));
-  const c = document.createElement('canvas'); c.width = maxW; c.height = rowsN * ch + gap * (rowsN + 1);
-  const ctx = c.getContext('2d'); ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, c.width, c.height);
-  imgs.forEach((im, k) => { const col = k % cols, row = Math.floor(k / cols); fit(ctx, im, gap + col * (cw + gap), gap + row * (ch + gap), cw, ch); });
-  return c;
-}
-function emptyCell(w, h){
-  const c = document.createElement('canvas'); c.width = w; c.height = h; const x = c.getContext('2d');
-  x.fillStyle = '#f3f4f6'; x.fillRect(0, 0, w, h); x.fillStyle = '#9ca3af'; x.font = `bold ${Math.round(w / 18)}px ${FONT}`;
-  x.textAlign = 'center'; x.textBaseline = 'middle'; x.direction = 'rtl'; x.fillText('لا توجد صور موقع', w / 2, h / 2); return c;
-}
 const toBlob = (c, q) => new Promise(r => c.toBlob(r, 'image/jpeg', q || 0.9));
 function download(blob, name){
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;
   document.body.append(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 60000);
 }
+const PLOT_COLORS = { bg: '#f3f6f4', ink: '#152420', acc: '#1f3b4d', fill: 'rgba(31,157,85,.18)', line: '#1f9d55' };
+function plotCanvas(sm, w, h){ const c = document.createElement('canvas'); c.width = w || 900; c.height = h || 540; drawPlot(c, sm, null, PLOT_COLORS); return c; }
+function arrowText(r, k){
+  if (k === 0) return 'صورة الموقع 1';
+  const d = dist(r.photos[k - 1], r.photos[k]);
+  return d != null ? `${fmtM(d)} من الصورة ${k}` : 'المسافة غير معروفة';
+}
+function capText(p){
+  return (p.lat != null ? `X ${p.lon.toFixed(6)}, Y ${p.lat.toFixed(6)}` + (p.acc != null ? ` (±${Math.round(p.acc)}m)` : '') : 'بدون إحداثيات') + ' · ' + window.FieldCam.fmtTime(new Date(p.time));
+}
+function statsList(sm){
+  return [
+    ['عدد صور الموقع', String(sm.total)],
+    ['المسافة الكلية', sm.withGps >= 2 ? fmtM(sm.path) : '—'],
+    ['المساحة', sm.area != null ? `${fmtNum(sm.area)} م²` : '—'],
+    ['الصور داخل كل 100 م²', sm.per100 != null ? fmtNum(sm.per100, 1) : '—']
+  ];
+}
 
-// ---------- تصدير Excel ----------
+// ---------- تصدير Excel (عمود واحد: المدموجة ثم صور الموقع بالأسهم والمسافات ثم الملخص) ----------
 $('ftXlsx').onclick = async () => {
   if (!window.ExcelJS){ say('⚠️ مكتبة Excel غير محمّلة، تأكد من الاتصال بالإنترنت.'); return; }
   const btn = $('ftXlsx'); btn.disabled = true;
   try {
     try { await document.fonts.load(`bold 30px ${FONT}`); } catch(_) {}
     const wb = new ExcelJS.Workbook(), ws = wb.addWorksheet('جدول المعالجة', { views: [{ rightToLeft: true }] });
-    const IW = 420; // عرض الصورة بالبكسل داخل الخلية
-    ws.columns = [
-      { header: 'رقم البلاغ', key: 'r', width: 24 },
-      { header: COL1, key: 'a', width: Math.round(IW / 7) + 3 },
-      { header: COL2, key: 'b', width: Math.round(IW / 7) + 3 }
-    ];
+    const IW = 460;
+    ws.columns = [{ header: 'رقم البلاغ', key: 'r', width: 24 }, { header: `${COL1} وصور الموقع`, key: 'a', width: Math.round(IW / 7) + 4 }];
     const h = ws.getRow(1); h.height = 30; h.font = { bold: true, size: 13, color: { argb: 'FFFFFFFF' } };
     h.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
-    [1, 2, 3].forEach(c => h.getCell(c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F3B4D' } });
+    [1, 2].forEach(c => h.getCell(c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F3B4D' } });
+    let rn = 2;
+    const center = { horizontal: 'center', vertical: 'middle', wrapText: true };
+    const addPic = async (blob, w, hgt) => {
+      const id = wb.addImage({ buffer: await blob.arrayBuffer(), extension: 'jpeg' });
+      ws.addImage(id, { tl: { col: 1.03, row: rn - 1 + 0.03 }, ext: { width: w, height: hgt }, editAs: 'oneCell' });
+      ws.getRow(rn).height = hgt * 0.75 + 10; rn++;
+    };
+    const textRow = (txt, opts) => {
+      const row = ws.getRow(rn); row.getCell(2).value = txt; row.getCell(2).alignment = center;
+      row.getCell(2).font = Object.assign({ bold: true, size: 12, color: { argb: 'FF1F3B4D' } }, opts && opts.font);
+      if (opts && opts.fill) row.getCell(2).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: opts.fill } };
+      row.height = (opts && opts.h) || 24; rn++;
+    };
     for (let i = 0; i < rows.length; i++){
       say(`جاري تجهيز Excel ${i + 1} من ${rows.length}...`);
-      const r = rows[i], rn = i + 2, row = ws.getRow(rn);
-      row.getCell(1).value = r.report || ''; row.getCell(1).font = { bold: true, size: 13 };
-      row.getCell(1).alignment = { horizontal: 'center', vertical: 'middle' };
-      const m = await loadImg(r.merged), mh = IW * m.naturalHeight / m.naturalWidth;
-      const col = r.photos.length ? await collage(r.photos, 1400) : emptyCell(1400, 700), ch = IW * col.height / col.width;
-      const idA = wb.addImage({ buffer: await r.merged.arrayBuffer(), extension: 'jpeg' });
-      const idB = wb.addImage({ buffer: await (await toBlob(col, 0.88)).arrayBuffer(), extension: 'jpeg' });
-      ws.addImage(idA, { tl: { col: 1.03, row: rn - 1 + 0.03 }, ext: { width: IW, height: mh }, editAs: 'oneCell' });
-      ws.addImage(idB, { tl: { col: 2.03, row: rn - 1 + 0.03 }, ext: { width: IW, height: ch }, editAs: 'oneCell' });
-      row.height = Math.max(mh, ch) * 0.75 + 12;
+      const r = rows[i], start = rn;
+      ws.getRow(rn).getCell(1).value = r.report || ''; ws.getRow(rn).getCell(1).font = { bold: true, size: 13 };
+      ws.getRow(rn).getCell(1).alignment = { horizontal: 'center', vertical: 'top' };
+      textRow(COL1, { font: { color: { argb: 'FFFFFFFF' } }, fill: 'FF1F3B4D' });
+      const m = await loadImg(r.merged); await addPic(r.merged, IW, IW * m.naturalHeight / m.naturalWidth);
+      if (r.photos.length) textRow(COL2, { font: { color: { argb: 'FFFFFFFF' } }, fill: 'FF1F3B4D' });
+      for (let k = 0; k < r.photos.length; k++){
+        const p = r.photos[k];
+        textRow(`⬇  ${arrowText(r, k)}`);
+        const im = await loadImg(p.blob); let w = IW, hh = IW * im.naturalHeight / im.naturalWidth;
+        if (hh > 560){ w = w * 560 / hh; hh = 560; }
+        await addPic(p.blob, w, hh);
+        textRow(capText(p), { font: { bold: false, size: 10, color: { argb: 'FF374151' } } });
+      }
+      const sm = summary(r.photos);
+      textRow('ملخص الموقع', { font: { color: { argb: 'FFFFFFFF' } }, fill: 'FF1F3B4D' });
+      statsList(sm).forEach(([k, v]) => textRow(`${k}: ${v}`, { font: { size: 12 } }));
+      if (sm.pts.length){ const pc = plotCanvas(sm); await addPic(await toBlob(pc, 0.9), IW, IW * pc.height / pc.width); }
+      textRow(sm.note, { font: { bold: false, size: 10, color: { argb: 'FF6B7280' } }, h: 34 });
+      ws.mergeCells(start, 1, rn - 1, 1);
+      rn++; // سطر فاصل بين البلاغات
       await new Promise(res => setTimeout(res, 0));
     }
     download(new Blob([await wb.xlsx.writeBuffer()], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), 'جدول-المعالجة.xlsx');
-    say(`✅ تم تصدير Excel (${rows.length} صف).`);
+    say(`✅ تم تصدير Excel (${rows.length} بلاغ).`);
   } catch (e) { console.error(e); say('⚠️ تعذّر تصدير Excel: ' + e.message); }
   finally { btn.disabled = false; }
 };
 
-// ---------- تصدير PDF (صفحة لكل بلاغ على شكل جدول) ----------
+// ---------- تصدير PDF (نفس الترتيب: عمود واحد، وتنتقل لصفحة جديدة عند الامتلاء) ----------
 $('ftPdf').onclick = async () => {
   const jsPDFCtor = window.jspdf && window.jspdf.jsPDF;
   if (!jsPDFCtor){ say('⚠️ مكتبة PDF غير محمّلة، تأكد من الاتصال بالإنترنت.'); return; }
   const btn = $('ftPdf'); btn.disabled = true;
   try {
     try { await document.fonts.load(`bold 40px ${FONT}`); } catch(_) {}
-    let doc = null;
+    const W = 1800, H = Math.round(W * 1.414), M = 80, CW = W - M * 2;
+    let doc = null, c = null, x = null, y = 0, pages = 0;
+    const flush = () => { if (!c) return; if (!doc) doc = new jsPDFCtor({ orientation: 'portrait', unit: 'mm', format: 'a4' }); else doc.addPage('a4', 'portrait'); doc.addImage(c.toDataURL('image/jpeg', 0.88), 'JPEG', 0, 0, 210, 297); pages++; c = null; };
+    const newPage = (r, cont) => {
+      flush(); c = document.createElement('canvas'); c.width = W; c.height = H; x = c.getContext('2d');
+      x.fillStyle = '#ffffff'; x.fillRect(0, 0, W, H);
+      x.direction = 'rtl'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillStyle = '#111827'; x.font = `bold 50px ${FONT}`;
+      x.fillText(`رقم البلاغ: ${r.report || '—'}${cont ? ' (تابع)' : ''}`, W / 2, M + 30);
+      y = M + 90;
+    };
+    const ensure = (r, need) => { if (y + need > H - M) newPage(r, true); };
+    const bar = (r, t) => { ensure(r, 90); x.fillStyle = '#1f3b4d'; x.fillRect(M, y, CW, 70); x.fillStyle = '#fff'; x.font = `bold 36px ${FONT}`; x.fillText(t, W / 2, y + 36); y += 90; };
+    const pic = (r, im, maxH) => {
+      const iw = im.naturalWidth || im.width, ih = im.naturalHeight || im.height;
+      let w = CW, h = CW * ih / iw; if (h > maxH){ w = w * maxH / h; h = maxH; }
+      ensure(r, h + 10); x.drawImage(im, (W - w) / 2, y, w, h); x.strokeStyle = '#d1d5db'; x.lineWidth = 2; x.strokeRect((W - w) / 2, y, w, h); y += h + 10;
+    };
+    const line = (r, t, size, color, hgt) => { ensure(r, hgt || 50); x.fillStyle = color || '#374151'; x.font = `${size > 30 ? 'bold ' : ''}${size || 26}px ${FONT}`; x.fillText(t, W / 2, y + (hgt || 50) / 2); y += hgt || 50; };
     for (let i = 0; i < rows.length; i++){
       say(`جاري تجهيز PDF ${i + 1} من ${rows.length}...`);
-      const r = rows[i], W = 1800, H = Math.round(W * 1.414), pad = 50, colW = (W - pad * 2) / 2;
-      const c = document.createElement('canvas'); c.width = W; c.height = H; const x = c.getContext('2d');
-      x.fillStyle = '#ffffff'; x.fillRect(0, 0, W, H);
-      x.direction = 'rtl'; x.textAlign = 'center'; x.textBaseline = 'middle';
-      x.fillStyle = '#111827'; x.font = `bold 52px ${FONT}`;
-      x.fillText(`رقم البلاغ: ${r.report || '—'}`, W / 2, pad + 40);
-      const thY = pad + 110, thH = 100, bodyY = thY + thH, bodyH = H - bodyY - pad;
-      x.fillStyle = '#1f3b4d'; x.fillRect(pad, thY, W - pad * 2, thH);
-      x.fillStyle = '#ffffff'; x.font = `bold 38px ${FONT}`;
-      x.fillText(COL1, pad + colW * 1.5, thY + thH / 2);   // العمود الأول على اليمين
-      x.fillText(COL2, pad + colW * 0.5, thY + thH / 2);
-      const m = await loadImg(r.merged);
-      fit(x, m, pad + colW + 20, bodyY + 20, colW - 40, bodyH - 40);
-      const col = r.photos.length ? await collage(r.photos, 1400) : emptyCell(1400, 900);
-      fit(x, col, pad + 20, bodyY + 20, colW - 40, bodyH - 40);
-      x.strokeStyle = '#1f3b4d'; x.lineWidth = 4;
-      x.strokeRect(pad, thY, W - pad * 2, H - thY - pad);
-      x.beginPath(); x.moveTo(pad + colW, thY); x.lineTo(pad + colW, H - pad); x.stroke();
-      if (!doc) doc = new jsPDFCtor({ orientation: 'portrait', unit: 'mm', format: 'a4' }); else doc.addPage('a4', 'portrait');
-      doc.addImage(c.toDataURL('image/jpeg', 0.9), 'JPEG', 0, 0, 210, 297);
+      const r = rows[i]; newPage(r, false);
+      bar(r, COL1); pic(r, await loadImg(r.merged), 1050);
+      for (let k = 0; k < r.photos.length; k++){
+        const p = r.photos[k], im = await loadImg(p.blob);
+        const iw = im.naturalWidth, ih = im.naturalHeight, ph = Math.min(950, CW * ih / iw);
+        ensure(r, (k === 0 ? 100 : 0) + 130 + ph + 10 + 44); // العنوان والسهم والصورة وسطرها في نفس الصفحة
+        if (k === 0){ y += 10; bar(r, COL2); }
+        // سهم مع المسافة
+        const t = arrowText(r, k); x.font = `bold 32px ${FONT}`; const tw = x.measureText(t).width + 50;
+        x.fillStyle = '#e8eef2'; x.beginPath(); x.roundRect ? x.roundRect((W - tw) / 2, y, tw, 52, 26) : x.rect((W - tw) / 2, y, tw, 52); x.fill();
+        x.fillStyle = '#1f3b4d'; x.fillText(t, W / 2, y + 27);
+        x.font = `bold 56px ${FONT}`; x.fillText('⬇', W / 2, y + 92); y += 130;
+        pic(r, im, 950);
+        line(r, capText(p), 24, '#4b5563', 44);
+      }
+      const sm = summary(r.photos);
+      ensure(r, 90 + 4 * 56 + 560); y += 10; bar(r, 'ملخص الموقع');
+      statsList(sm).forEach(([k, v]) => line(r, `${k}: ${v}`, 34, '#111827', 56));
+      if (sm.pts.length) pic(r, plotCanvas(sm, 1000, 560), 560);
+      line(r, sm.note, 24, '#6b7280', 50);
       await new Promise(res => setTimeout(res, 0));
     }
+    flush();
     download(doc.output('blob'), 'جدول-المعالجة.pdf');
-    say(`✅ تم تصدير PDF (${rows.length} صفحة).`);
+    say(`✅ تم تصدير PDF (${rows.length} بلاغ في ${pages} صفحة).`);
   } catch (e) { console.error(e); say('⚠️ تعذّر تصدير PDF: ' + e.message); }
   finally { btn.disabled = false; }
 };
