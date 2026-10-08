@@ -240,6 +240,10 @@ body{background:var(--bg);color:var(--ink);font-family:"Tajawal","Cairo",system-
 #tab4 .fgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px}
 @media(max-width:480px){#tab4 .fgrid{grid-template-columns:repeat(3,1fr);gap:6px}}
 #tab4 .ft-tile{display:flex;flex-direction:column;gap:3px;min-width:0;border-radius:8px;padding:3px;border:2px solid transparent}
+#tab4 .ft-acc{display:flex;align-items:center;gap:6px;font-size:.82rem;color:var(--muted)}
+#tab4 .ft-acc select{font:inherit;padding:7px 8px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--ink)}
+#tab4 .ft-tile.weak .ph{outline:3px solid #f59e0b;outline-offset:-3px}
+#tab4 .ft-tile.weak .tm{color:#b45309;font-weight:700}
 #tab4 .ft-tile.sel{border-color:var(--accent);background:var(--surface-2)}
 #tab4 .ft-tile .ph{position:relative;aspect-ratio:3/4;max-width:100%;border-radius:6px;overflow:hidden;background:#111}
 #tab4 .ft-tile img{width:100%;height:100%;object-fit:cover;display:block;cursor:pointer;image-rendering:auto}
@@ -571,6 +575,12 @@ body{background:var(--bg);color:var(--ink);font-family:"Tajawal","Cairo",system-
     <div class="ft-actions">
       <button type="button" class="ft-btn" id="ftXlsx">⬇️ تصدير Excel</button>
       <button type="button" class="ft-btn" id="ftPdf">📄 تصدير PDF</button>
+      <label class="ft-acc">حد دقة GPS للمساحة
+        <select id="ftAcc">
+          <option value="10">±10 م</option><option value="15">±15 م</option><option value="20">±20 م</option>
+          <option value="30">±30 م</option><option value="50">±50 م</option><option value="0">بدون حد</option>
+        </select>
+      </label>
       <button type="button" class="ft-btn danger" id="ftClear">حذف الكل</button>
     </div>
   </div>
@@ -961,7 +971,10 @@ const cap = (function(){
   let st = null, shots = [], resolver = null, note = '', gpsTimer = 0, cancelArmed = false;
   function gpsLine(){
     const p = currentPos();
-    $('capGps').textContent = p ? `📍 دقة ±${Math.round(p.acc)} م` : '📍 جاري تحديد الموقع…';
+    let lim = 20; try { const v = localStorage.getItem('accLimit'); if (v !== null) lim = +v; } catch(_) {}
+    const weak = p && lim && p.acc > lim;
+    $('capGps').textContent = p ? `📍 دقة ±${Math.round(p.acc)} م` + (weak ? ' ⚠ ضعيفة، انتظر قليلاً' : ' ✓') : '📍 جاري تحديد الموقع…';
+    $('capGps').style.color = !p ? '' : weak ? '#fca5a5' : '#86efac';
   }
   function strip(){
     const s = $('capStrip'); s.innerHTML = '';
@@ -2271,14 +2284,18 @@ let db = null, rows = [];   // {id, report, merged:Blob, created, photos:[{id,bl
 const selections = new Map(); // تحديد الصور لكل بلاغ (لا يُحفظ)
 const selOf = r => { if (!selections.has(r.id)) selections.set(r.id, new Set()); return selections.get(r.id); };
 // الصورة المرجعية: أول صورة فيها إحداثيات
-const refPhoto = r => r.photos.find(p => p.lat != null) || null;
+// حد دقة GPS: الصور الأضعف منه لا تدخل في المساحة ولا تكون نقطة البداية
+const ACC_KEY = 'accLimit';
+function accLimit(){ let v = null; try { v = localStorage.getItem(ACC_KEY); } catch(_) {} return v === null ? 20 : +v; }   // 0 = بدون حد
+const goodAcc = p => p.lat != null && (!accLimit() || p.acc == null || p.acc <= accLimit());
+const refPhoto = r => r.photos.find(goodAcc) || r.photos.find(p => p.lat != null) || null;
 // صفوف جدول الإحداثيات
 const COORD_HEAD = ['#', 'X (خط الطول)', 'Y (خط العرض)', 'دقة GPS', 'التاريخ والوقت', 'المسافة من الصورة الأولى'];
 function coordRows(r){
-  const ref = r.photos.find(p => p.lat != null) || null;
+  const ref = refPhoto(r);
   return r.photos.map((p, k) => {
     const ok = p.lat != null, d = ok && ref ? dist(ref, p) : null;
-    return [String(k + 1), ok ? p.lon.toFixed(6) : '—', ok ? p.lat.toFixed(6) : '—', ok && p.acc != null ? `±${Math.round(p.acc)} م` : '—',
+    return [String(k + 1), ok ? p.lon.toFixed(6) : '—', ok ? p.lat.toFixed(6) : '—', ok && p.acc != null ? `±${Math.round(p.acc)} م` + (goodAcc(p) ? '' : ' ⚠ مستبعدة') : '—',
       window.FieldCam.fmtTime(new Date(p.time)), !ok ? 'بدون إحداثيات' : p === ref ? 'البداية' : fmtM(d)];
   });
 }
@@ -2348,7 +2365,8 @@ function hull(pts){
 }
 // المساحة = مساحة المضلع الذي يحيط بكل نقاط الصور (بالمتر المربع)
 function summary(photos){
-  const g = photos.filter(p => p.lat != null), out = { total: photos.length, withGps: g.length, path: 0, area: null, per100: null, pts: [], hull: [], note: '' };
+  const all = photos.filter(p => p.lat != null), g = all.filter(goodAcc);
+  const out = { total: photos.length, withGps: all.length, used: g.length, excluded: all.length - g.length, path: 0, area: null, per100: null, pts: [], hull: [], note: '' };
   for (let i = 1; i < g.length; i++) out.path += dist(g[i - 1], g[i]);
   out.far = g.length >= 2 ? Math.max(...g.slice(1).map(p => dist(g[0], p))) : null;
   if (g.length){
@@ -2361,10 +2379,11 @@ function summary(photos){
     let a = 0; for (let i = 0; i < out.hull.length; i++){ const p = out.hull[i], q = out.hull[(i + 1) % out.hull.length]; a += p.x * q.y - q.x * p.y; }
     out.area = Math.abs(a) / 2;
     if (out.area >= 1) out.per100 = g.length / out.area * 100;
-    out.note = 'المساحة محسوبة من الشكل الذي يحيط بكل نقاط التصوير.' + (avgAcc != null ? ` متوسط دقة GPS ±${Math.round(avgAcc)} م، فالأرقام تقريبية.` : '');
+    out.note = 'المساحة محسوبة من الشكل الذي يحيط بنقاط التصوير.' + (avgAcc != null ? ` متوسط دقة GPS ±${Math.round(avgAcc)} م، فالأرقام تقريبية.` : '');
   } else {
-    out.note = g.length < 3 ? 'تحتاج 3 صور على الأقل بإحداثيات من أماكن مختلفة لحساب المساحة.' : 'النقاط على خط واحد تقريباً، لا توجد مساحة.';
+    out.note = g.length < 3 ? 'تحتاج 3 صور على الأقل بإحداثيات دقيقة من أماكن مختلفة لحساب المساحة.' : 'النقاط على خط واحد تقريباً، لا توجد مساحة.';
   }
+  if (out.excluded) out.note += ` استُبعدت ${out.excluded} صورة من الحساب لأن دقتها أضعف من ±${accLimit()} م.`;
   return out;
 }
 // رسم مخطط صغير لمواقع الصور
@@ -2434,7 +2453,8 @@ function render(){
         t.innerHTML = `<div class="ph"><img alt="" loading="lazy" decoding="async"><span class="idx">${k + 1}</span><button type="button" class="chk" aria-label="تحديد الصورة">✓</button></div><div class="dist"></div><div class="tm"></div>`;
         t.querySelector('img').src = url(p.blob);
         t.querySelector('.dist').textContent = distLabel(r, p, ref, d);
-        t.querySelector('.tm').textContent = (ok ? '' : '⚠ ') + window.FieldCam.fmtTime(new Date(p.time));
+        t.querySelector('.tm').textContent = (ok ? (goodAcc(p) ? '' : `⚠ ±${Math.round(p.acc)}م مستبعدة · `) : '⚠ ') + window.FieldCam.fmtTime(new Date(p.time));
+        if (ok && !goodAcc(p)) t.classList.add('weak');
         t.querySelector('img').onclick = () => openLb(p.blob, `${k + 1} · ${distLabel(r, p, ref, d)} · ` + (ok ? `X ${p.lon.toFixed(6)}, Y ${p.lat.toFixed(6)} · ` : '') + window.FieldCam.fmtTime(new Date(p.time)));
         t.querySelector('.chk').onclick = () => { sel.has(p.id) ? sel.delete(p.id) : sel.add(p.id); render(); };
         g.appendChild(t);
@@ -2467,7 +2487,7 @@ function render(){
     const sb = document.createElement('div'); sb.className = 'ft-sum';
     sb.innerHTML = `<div class="ft-ch">ملخص الموقع</div><div class="stats"></div><canvas class="plot" width="600" height="360" aria-label="مخطط مواقع الصور"></canvas><p class="note"></p>`;
     const stats = [
-      ['عدد صور الموقع', sm.total + (sm.withGps !== sm.total ? ` (بإحداثيات ${sm.withGps})` : '')],
+      ['عدد صور الموقع', sm.total + (sm.used !== sm.total ? ` (المحسوبة ${sm.used})` : '')],
       ['أبعد صورة عن الصورة الأولى', sm.far != null ? fmtM(sm.far) : '—'],
       ['المساحة', sm.area != null ? `${fmtNum(sm.area)} م²` : '—'],
       ['عدد الصور داخل كل 100 م²', sm.per100 != null ? fmtNum(sm.per100, 1) + ' صورة' : '—']
@@ -2516,7 +2536,7 @@ function plotCanvas(sm, w, h){ const c = document.createElement('canvas'); c.wid
 function distOf(r, p){ const ref = refPhoto(r); return distLabel(r, p, ref, ref && p.lat != null ? dist(ref, p) : null).replace('📏 ', ''); }
 function statsList(sm){
   return [
-    ['عدد صور الموقع', String(sm.total)],
+    ['عدد صور الموقع', sm.total + (sm.used !== sm.total ? ` (المحسوبة ${sm.used})` : '')],
     ['أبعد صورة عن الأولى', sm.far != null ? fmtM(sm.far) : '—'],
     ['المساحة', sm.area != null ? `${fmtNum(sm.area)} م²` : '—'],
     ['الصور داخل كل 100 م²', sm.per100 != null ? fmtNum(sm.per100, 1) : '—']
@@ -2694,6 +2714,8 @@ $('ftPdf').onclick = async () => {
   finally { btn.disabled = false; }
 };
 
+$('ftAcc').value = String(accLimit());
+$('ftAcc').onchange = () => { try { localStorage.setItem(ACC_KEY, $('ftAcc').value); } catch(_) {} render(); say(`صار حد الدقة ${$('ftAcc').value === '0' ? 'بدون حد' : '±' + $('ftAcc').value + ' م'}. أُعيد حساب المساحة.`); };
 window.FieldTable = { insert };
 init();
 })();
