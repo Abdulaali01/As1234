@@ -240,6 +240,15 @@ body{background:var(--bg);color:var(--ink);font-family:"Tajawal","Cairo",system-
 #tab4 .fgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px}
 @media(max-width:480px){#tab4 .fgrid{grid-template-columns:repeat(3,1fr);gap:6px}}
 #tab4 .ft-tile{display:flex;flex-direction:column;gap:3px;min-width:0;border-radius:8px;padding:3px;border:2px solid transparent}
+#tab4 .ft-btn.attach{background:#1f3b4d;color:#fff;border-color:#1f3b4d}
+#tab4 .ft-site{display:flex;flex-direction:column;gap:8px;border:2px dashed #1f3b4d;border-radius:10px;padding:8px}
+#tab4 .site-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+#tab4 .site-in{flex:1;min-width:200px;font:inherit;font-size:1rem;padding:9px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--ink);direction:ltr;text-align:left;font-variant-numeric:tabular-nums}
+#tab4 .site-use{display:flex;align-items:center;gap:6px;font-weight:700;font-size:.88rem;background:var(--surface-2);padding:8px 10px;border-radius:8px;cursor:pointer}
+#tab4 .site-use input{width:20px;height:20px;accent-color:#1f3b4d}
+#tab4 .site-info{font-size:.8rem;color:var(--muted);line-height:1.6}
+#tab4 .site-info .ltr{direction:ltr;unicode-bidi:isolate;font-variant-numeric:tabular-nums;color:var(--ink);font-weight:700}
+#tab4 .site-info a{color:var(--accent);font-weight:700}
 #tab4 .ft-acc{display:flex;align-items:center;gap:6px;font-size:.82rem;color:var(--muted)}
 #tab4 .ft-acc select{font:inherit;padding:7px 8px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--ink)}
 #tab4 .ft-tile.weak .ph{outline:3px solid #f59e0b;outline-offset:-3px}
@@ -575,6 +584,8 @@ body{background:var(--bg);color:var(--ink);font-family:"Tajawal","Cairo",system-
     <div class="ft-actions">
       <button type="button" class="ft-btn" id="ftXlsx">⬇️ تصدير Excel</button>
       <button type="button" class="ft-btn" id="ftPdf">📄 تصدير PDF</button>
+      <button type="button" class="ft-btn attach" id="ftAttach">📎 إرفاق جدول البلاغات</button>
+      <input type="file" id="ftAttachIn" accept=".xlsx" hidden>
       <label class="ft-acc">حد دقة GPS للمساحة
         <select id="ftAcc">
           <option value="10">±10 م</option><option value="15">±15 م</option><option value="20">±20 م</option>
@@ -2288,20 +2299,25 @@ const selOf = r => { if (!selections.has(r.id)) selections.set(r.id, new Set());
 const ACC_KEY = 'accLimit';
 function accLimit(){ let v = null; try { v = localStorage.getItem(ACC_KEY); } catch(_) {} return v === null ? 20 : +v; }   // 0 = بدون حد
 const goodAcc = p => p.lat != null && (!accLimit() || p.acc == null || p.acc <= accLimit());
-const refPhoto = r => r.photos.find(goodAcc) || r.photos.find(p => p.lat != null) || null;
+const sitePt = r => (r.useSite && r.siteCoord) ? { lat: r.siteCoord.lat, lon: r.siteCoord.lon, acc: null, isSite: true } : null;
+const refPhoto = r => sitePt(r) || r.photos.find(goodAcc) || r.photos.find(p => p.lat != null) || null;
+const refName = r => sitePt(r) ? 'نقطة البلاغ' : 'الصورة الأولى';
 // صفوف جدول الإحداثيات
-const COORD_HEAD = ['#', 'X (خط الطول)', 'Y (خط العرض)', 'دقة GPS', 'التاريخ والوقت', 'المسافة من الصورة الأولى'];
+const COORD_HEAD = ['#', 'X (خط الطول)', 'Y (خط العرض)', 'دقة GPS', 'التاريخ والوقت', 'المسافة من نقطة البداية'];
 function coordRows(r){
   const ref = refPhoto(r);
-  return r.photos.map((p, k) => {
+  const out = r.photos.map((p, k) => {
     const ok = p.lat != null, d = ok && ref ? dist(ref, p) : null;
     return [String(k + 1), ok ? p.lon.toFixed(6) : '—', ok ? p.lat.toFixed(6) : '—', ok && p.acc != null ? `±${Math.round(p.acc)} م` + (goodAcc(p) ? '' : ' ⚠ مستبعدة') : '—',
       window.FieldCam.fmtTime(new Date(p.time)), !ok ? 'بدون إحداثيات' : p === ref ? 'البداية' : fmtM(d)];
   });
+  if (ref && ref.isSite) out.unshift(['★', ref.lon.toFixed(6), ref.lat.toFixed(6), '—', 'من جدول البلاغات', 'نقطة البلاغ (البداية)']);
+  return out;
 }
 function distLabel(r, p, ref, d){
   if (p.lat == null) return 'بدون إحداثيات';
   if (p === ref) return r.photos[0] === p ? 'الصورة الأولى (البداية)' : `البداية (الصورة ${r.photos.indexOf(p) + 1})`;
+  if (ref && ref.isSite) return `📏 ${fmtM(d)} من نقطة البلاغ`;
   return `📏 ${fmtM(d)} من الصورة ${r.photos.indexOf(ref) + 1}`;
 }
 const urls = new Map();     // Blob -> objectURL
@@ -2315,6 +2331,7 @@ function tx(mode, fn){
   });
 }
 const strip = r => ({ id: r.id, report: r.report, merged: r.merged, created: r.created,
+  siteCoord: r.siteCoord || null, siteSrc: r.siteSrc || '', siteShort: !!r.siteShort, siteManual: !!r.siteManual, useSite: !!r.useSite,
   photos: r.photos.map(p => ({ id: p.id, blob: p.blob, time: p.time, lat: p.lat, lon: p.lon, acc: p.acc })) });
 async function save(r){ if (db) await tx('readwrite', st => st.put(strip(r))); }
 async function del(id){ if (db) await tx('readwrite', st => st.delete(id)); }
@@ -2336,7 +2353,7 @@ async function insert(items){
     if (same){ same.merged = it.blob; await save(same); updated++; }
     else {
       const r = { id: Date.now() + '-' + Math.random().toString(36).slice(2, 7), report: it.report, merged: it.blob, created: Date.now() + added, photos: [] };
-      rows.push(r); await save(r); added++;
+      applySite(r); rows.push(r); await save(r); added++;
     }
   }
   render();
@@ -2364,25 +2381,27 @@ function hull(pts){
   up.pop(); lo.pop(); return lo.concat(up);
 }
 // المساحة = مساحة المضلع الذي يحيط بكل نقاط الصور (بالمتر المربع)
-function summary(photos){
+function summary(photos, site){
   const all = photos.filter(p => p.lat != null), g = all.filter(goodAcc);
-  const out = { total: photos.length, withGps: all.length, used: g.length, excluded: all.length - g.length, path: 0, area: null, per100: null, pts: [], hull: [], note: '' };
+  const nPhotos = g.length; if (site) g.unshift(site);
+  const out = { total: photos.length, withGps: all.length, used: nPhotos, excluded: all.length - nPhotos, path: 0, area: null, per100: null, pts: [], hull: [], note: '' };
   for (let i = 1; i < g.length; i++) out.path += dist(g[i - 1], g[i]);
   out.far = g.length >= 2 ? Math.max(...g.slice(1).map(p => dist(g[0], p))) : null;
   if (g.length){
     const lat0 = g.reduce((s, p) => s + p.lat, 0) / g.length, lon0 = g.reduce((s, p) => s + p.lon, 0) / g.length, k = Math.PI / 180;
-    out.pts = g.map(p => ({ x: (p.lon - lon0) * k * R * Math.cos(lat0 * k), y: (p.lat - lat0) * k * R, n: photos.indexOf(p) + 1 }));
+    out.pts = g.map(p => ({ x: (p.lon - lon0) * k * R * Math.cos(lat0 * k), y: (p.lat - lat0) * k * R, n: p.isSite ? '★' : photos.indexOf(p) + 1 }));
     out.hull = hull(out.pts);
   }
   const accs = g.filter(p => p.acc != null).map(p => p.acc), avgAcc = accs.length ? accs.reduce((s, a) => s + a, 0) / accs.length : null;
   if (out.hull.length >= 3){
     let a = 0; for (let i = 0; i < out.hull.length; i++){ const p = out.hull[i], q = out.hull[(i + 1) % out.hull.length]; a += p.x * q.y - q.x * p.y; }
     out.area = Math.abs(a) / 2;
-    if (out.area >= 1) out.per100 = g.length / out.area * 100;
+    if (out.area >= 1) out.per100 = nPhotos / out.area * 100;
     out.note = 'المساحة محسوبة من الشكل الذي يحيط بنقاط التصوير.' + (avgAcc != null ? ` متوسط دقة GPS ±${Math.round(avgAcc)} م، فالأرقام تقريبية.` : '');
   } else {
     out.note = g.length < 3 ? 'تحتاج 3 صور على الأقل بإحداثيات دقيقة من أماكن مختلفة لحساب المساحة.' : 'النقاط على خط واحد تقريباً، لا توجد مساحة.';
   }
+  if (site) out.note = 'نقطة البداية: إحداثيات البلاغ من الجدول المرفق. ' + out.note;
   if (out.excluded) out.note += ` استُبعدت ${out.excluded} صورة من الحساب لأن دقتها أضعف من ±${accLimit()} م.`;
   return out;
 }
@@ -2430,6 +2449,7 @@ function render(){
     mb.querySelector('img').src = url(r.merged);
     mb.onclick = () => shoot(r);
     col.appendChild(mb);
+    col.appendChild(siteBox(r));
 
     if (r.photos.length){
       const ref = refPhoto(r);
@@ -2483,12 +2503,12 @@ function render(){
     }
 
     // الملخص: المساحة وعدد الصور
-    const sm = summary(r.photos);
+    const sm = summary(r.photos, sitePt(r));
     const sb = document.createElement('div'); sb.className = 'ft-sum';
     sb.innerHTML = `<div class="ft-ch">ملخص الموقع</div><div class="stats"></div><canvas class="plot" width="600" height="360" aria-label="مخطط مواقع الصور"></canvas><p class="note"></p>`;
     const stats = [
       ['عدد صور الموقع', sm.total + (sm.used !== sm.total ? ` (المحسوبة ${sm.used})` : '')],
-      ['أبعد صورة عن الصورة الأولى', sm.far != null ? fmtM(sm.far) : '—'],
+      [`أبعد صورة عن ${refName(r)}`, sm.far != null ? fmtM(sm.far) : '—'],
       ['المساحة', sm.area != null ? `${fmtNum(sm.area)} م²` : '—'],
       ['عدد الصور داخل كل 100 م²', sm.per100 != null ? fmtNum(sm.per100, 1) + ' صورة' : '—']
     ];
@@ -2537,7 +2557,7 @@ function distOf(r, p){ const ref = refPhoto(r); return distLabel(r, p, ref, ref 
 function statsList(sm){
   return [
     ['عدد صور الموقع', sm.total + (sm.used !== sm.total ? ` (المحسوبة ${sm.used})` : '')],
-    ['أبعد صورة عن الأولى', sm.far != null ? fmtM(sm.far) : '—'],
+    ['أبعد صورة عن نقطة البداية', sm.far != null ? fmtM(sm.far) : '—'],
     ['المساحة', sm.area != null ? `${fmtNum(sm.area)} م²` : '—'],
     ['الصور داخل كل 100 م²', sm.per100 != null ? fmtNum(sm.per100, 1) : '—']
   ];
@@ -2597,7 +2617,7 @@ $('ftXlsx').onclick = async () => {
         }
         ws.getRow(imgRow).height = CELLH * 0.75; ws.getRow(capRow).height = 30; rn += 2;
       }
-      const sm = summary(r.photos);
+      const sm = summary(r.photos, sitePt(r));
       wide('ملخص الموقع', { font: { color: { argb: 'FFFFFFFF' } }, fill: 'FF1F3B4D' });
       statsList(sm).forEach(([k, v]) => wide(`${k}: ${v}`));
       if (sm.pts.length){
@@ -2644,7 +2664,7 @@ $('ftPdf').onclick = async () => {
     const bar = (x, bx, y, bw, t) => { x.fillStyle = '#1f3b4d'; x.fillRect(bx, y, bw, 90); x.fillStyle = '#fff'; x.font = `bold 46px ${FONT}`; x.fillText(t, bx + bw / 2, y + 47); return y + 110; };
     for (let i = 0; i < rows.length; i++){
       say(`جاري تجهيز PDF ${i + 1} من ${rows.length}...`);
-      const r = rows[i], sm = summary(r.photos), rep = `رقم البلاغ: ${r.report || '—'}`;
+      const r = rows[i], sm = summary(r.photos, sitePt(r)), rep = `رقم البلاغ: ${r.report || '—'}`;
       // الصفحة الأولى: المدموجة يميناً والملخص يساراً
       let [c, x] = page(); title(x, rep);
       const top0 = M + 110, gapC = 70, rw = Math.round((CW - gapC) * 0.56), lw = CW - gapC - rw, rx = W - M - rw, lx = M;
@@ -2713,6 +2733,133 @@ $('ftPdf').onclick = async () => {
   } catch (e) { console.error(e); say('⚠️ تعذّر تصدير PDF: ' + e.message); }
   finally { btn.disabled = false; }
 };
+
+// ================= إرفاق جدول البلاغات واستخراج الإحداثيات من الروابط =================
+const SITE_KEY = 'siteMap';
+let siteMap = {}; try { siteMap = JSON.parse(localStorage.getItem(SITE_KEY) || '{}') || {}; } catch(_) { siteMap = {}; }
+const repKey = t => { const m = String(t || '').toUpperCase().match(/(INC|REQ)\D*(\d{2})\D*(\d{2})\D*(\d{4,})/); return m ? `${m[1]}-${m[2]}-${m[3]}-${m[4]}` : ''; };
+const tailKey = t => { const d = String(t || '').replace(/\D/g, ''); return d.length >= 6 ? d.slice(-6) : ''; };
+const inRange = (lat, lon) => Math.abs(lat) <= 90 && Math.abs(lon) <= 180 && !(lat === 0 && lon === 0);
+// يقرأ الإحداثيات من رابط خرائط أو من نص
+function extractCoords(str){
+  if (!str) return null;
+  let t = String(str); try { t = decodeURIComponent(t); } catch(_) {}
+  const pats = [/!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/, /@(-?\d+\.\d+),\s*(-?\d+\.\d+)/,
+    /[?&](?:q|query|ll|sll|destination|daddr|center|saddr|location|loc)=(?:loc:)?(-?\d+\.\d+)\s*,\s*(-?\d+\.\d+)/i,
+    /(-?\d{1,3}\.\d{3,})\s*[,،;\s]\s*(-?\d{1,3}\.\d{3,})/];
+  for (const re of pats){
+    const m = t.match(re); if (!m) continue;
+    let a = +m[1], b = +m[2];
+    // في السعودية: خط العرض 16–33 وخط الطول 34–56؛ إذا جاء الطول أولاً نقلبهما
+    if (a >= 34 && a <= 56 && b >= 16 && b <= 33.9) [a, b] = [b, a];
+    if (inRange(a, b)) return { lat: a, lon: b };
+  }
+  return null;
+}
+const isShort = s => /goo\.gl|maps\.app|bit\.ly|tinyurl/i.test(String(s || ''));
+function cellText(c){
+  const v = c.value; const out = [];
+  if (v == null) return out;
+  if (typeof v === 'object'){
+    if (v.text) out.push(typeof v.text === 'string' ? v.text : (v.text.richText || []).map(x => x.text).join(''));
+    if (v.hyperlink) out.push(v.hyperlink);
+    if (v.richText) out.push(v.richText.map(x => x.text).join(''));
+    if (v.result != null) out.push(String(v.result));
+  } else out.push(String(v));
+  if (c.hyperlink && !out.includes(c.hyperlink)) out.push(c.hyperlink);
+  return out;
+}
+async function attachSheet(file){
+  if (!window.ExcelJS){ say('⚠️ مكتبة Excel غير محمّلة، تأكد من الاتصال بالإنترنت.'); return; }
+  say('جاري قراءة الجدول...');
+  const wb = new ExcelJS.Workbook();
+  try { await wb.xlsx.load(await file.arrayBuffer()); } catch (e) { say('⚠️ تعذّرت قراءة الملف. تأكد أنه ملف Excel بصيغة xlsx.'); return; }
+  const found = {}; let total = 0, shortN = 0, noCoord = 0;
+  wb.eachSheet(ws => {
+    let latCol = 0, lonCol = 0, repCol = 0;
+    ws.getRow(1).eachCell((c, ci) => {
+      const h = cellText(c).join(' ').toLowerCase();
+      if (/^(lat|latitude|y)$|خط العرض|عرض/.test(h.trim())) latCol = ci;
+      else if (/^(lon|lng|long|longitude|x)$|خط الطول|طول/.test(h.trim())) lonCol = ci;
+      else if (/بلاغ|report|ticket|incident/.test(h)) repCol = repCol || ci;
+    });
+    ws.eachRow((row, ri) => {
+      let key = '', tail = '', coords = null, link = '', short = false;
+      row.eachCell((c, ci) => {
+        for (const t of cellText(c)){
+          if (!key){ const k = repKey(t); if (k) key = k; }
+          if (ci === repCol && !tail) tail = tailKey(t);
+          if (!coords && ci !== latCol && ci !== lonCol){ const cc = extractCoords(t); if (cc){ coords = cc; link = t; } }
+          if (/^https?:/i.test(t) && !link) link = t;
+          if (isShort(t)) short = true;
+        }
+      });
+      if (!coords && latCol && lonCol && ri > 1){
+        const la = parseFloat(cellText(row.getCell(latCol))[0]), lo = parseFloat(cellText(row.getCell(lonCol))[0]);
+        if (inRange(la, lo)) coords = { lat: la, lon: lo };
+      }
+      if (!key && !tail) return;
+      total++;
+      const rec = { lat: coords ? coords.lat : null, lon: coords ? coords.lon : null, link: link || '', short: !coords && short };
+      if (rec.short) shortN++; else if (!coords) noCoord++;
+      if (key) found[key] = rec;
+      const tk = tail || tailKey(key); if (tk) found['#' + tk] = rec;
+    });
+  });
+  siteMap = found; try { localStorage.setItem(SITE_KEY, JSON.stringify(siteMap)); } catch(_) {}
+  let linked = 0;
+  for (const r of rows){ if (applySite(r, true)) { linked++; await save(r); } }
+  render();
+  say(`قُرئ ${total} بلاغ من الجدول، ورُبط منها ${linked} بلاغ في جدول المعالجة.` +
+    (shortN ? `\n⚠ ${shortN} رابط مختصر لا يحتوي الإحداثيات: افتح الرابط وانسخ الإحداثيات والصقها في المربع يدوياً.` : '') +
+    (noCoord ? `\n⚠ ${noCoord} بلاغ بدون إحداثيات أو رابط مقروء.` : ''));
+}
+// يربط إحداثيات البلاغ بالصف (لا يغيّر ما كتبته يدوياً)
+function applySite(r, force){
+  if (r.siteManual && !force) return false;
+  if (r.siteManual) return false;
+  const rec = siteMap[repKey(r.report)] || siteMap['#' + tailKey(r.report)];
+  if (!rec) return false;
+  r.siteSrc = rec.link || '';
+  r.siteShort = rec.short;
+  r.siteCoord = rec.lat != null ? { lat: rec.lat, lon: rec.lon } : null;
+  return true;
+}
+function parseTyped(v){ const c = extractCoords(v); return c; }
+// مربع إحداثيات البلاغ داخل كل صف
+function siteBox(r){
+  const box = document.createElement('div'); box.className = 'ft-site';
+  box.innerHTML = `<div class="ft-ch">إحداثيات البلاغ من الجدول المرفق</div>
+    <div class="site-row">
+      <input type="text" class="site-in" inputmode="decimal" placeholder="مثال: 21.283059, 40.377927">
+      <label class="site-use"><input type="checkbox"> اعتبرها النقطة الأولى</label>
+    </div>
+    <div class="site-info"></div>`;
+  const inp = box.querySelector('.site-in'), chk = box.querySelector('.site-use input'), info = box.querySelector('.site-info');
+  inp.value = r.siteCoord ? `${r.siteCoord.lat.toFixed(6)}, ${r.siteCoord.lon.toFixed(6)}` : '';
+  chk.checked = !!r.useSite; chk.disabled = !r.siteCoord;
+  const src = r.siteManual ? 'مكتوبة يدوياً' : r.siteSrc ? (/^https?:/i.test(r.siteSrc) ? 'من رابط في الجدول' : 'من الجدول') : '';
+  if (r.siteCoord){
+    info.innerHTML = `<span class="ltr"></span> · <span class="src"></span> · <a target="_blank" rel="noopener">فتح في الخرائط</a>`;
+    info.querySelector('.ltr').textContent = `X ${r.siteCoord.lon.toFixed(6)} , Y ${r.siteCoord.lat.toFixed(6)}`;
+    info.querySelector('.src').textContent = src || '';
+    info.querySelector('a').href = `https://www.google.com/maps?q=${r.siteCoord.lat},${r.siteCoord.lon}`;
+  } else if (r.siteShort){
+    info.textContent = '⚠ الرابط في الجدول مختصر ولا يحتوي الإحداثيات. افتحه وانسخ الإحداثيات والصقها هنا.';
+    if (r.siteSrc){ const a = document.createElement('a'); a.href = r.siteSrc; a.target = '_blank'; a.rel = 'noopener'; a.textContent = ' فتح الرابط'; info.appendChild(a); }
+  } else info.textContent = Object.keys(siteMap).length ? 'لم يُعثر على هذا البلاغ في الجدول المرفق. تقدر تلصق الإحداثيات يدوياً.' : 'أرفق جدول البلاغات من زر «📎 إرفاق جدول البلاغات»، أو الصق الإحداثيات هنا.';
+  inp.onchange = async () => {
+    const v = inp.value.trim();
+    if (!v){ r.siteCoord = null; r.useSite = false; r.siteManual = true; r.siteSrc = ''; }
+    else { const c = parseTyped(v); if (!c){ info.textContent = '⚠ لم أفهم الإحداثيات. اكتبها هكذا: 21.283059, 40.377927 أو الصق رابط خرائط فيه الإحداثيات.'; return; }
+      r.siteCoord = c; r.siteManual = true; r.siteShort = false; r.siteSrc = /^https?:/i.test(v) ? v : ''; }
+    await save(r); render();
+  };
+  chk.onchange = async () => { r.useSite = chk.checked; await save(r); render(); say(chk.checked ? `صارت إحداثيات البلاغ ${r.report || ''} هي النقطة الأولى في حساب المسافات والمساحة.` : 'رجع الحساب من الصورة الأولى.'); };
+  return box;
+}
+$('ftAttach').onclick = () => $('ftAttachIn').click();
+$('ftAttachIn').onchange = async e => { const f = e.target.files[0]; e.target.value = ''; if (f) await attachSheet(f); };
 
 $('ftAcc').value = String(accLimit());
 $('ftAcc').onchange = () => { try { localStorage.setItem(ACC_KEY, $('ftAcc').value); } catch(_) {} render(); say(`صار حد الدقة ${$('ftAcc').value === '0' ? 'بدون حد' : '±' + $('ftAcc').value + ' م'}. أُعيد حساب المساحة.`); };
