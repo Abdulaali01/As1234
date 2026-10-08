@@ -277,6 +277,11 @@ body{background:var(--bg);color:var(--ink);font-family:"Tajawal","Cairo",system-
 #tab4 .ct a.pin{color:var(--accent);font-weight:700;text-decoration:none;white-space:nowrap}
 #tab4 .ct-copy{align-self:flex-start;border:1px solid var(--border);background:var(--surface);color:var(--accent);border-radius:8px;padding:6px 12px;font:inherit;font-weight:700;cursor:pointer}
 #tab4 .ft-sum{display:flex;flex-direction:column;gap:10px;margin-top:6px;border:2px solid #1f3b4d;border-radius:12px;padding:10px}
+#tab4 .path-btns{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+@media(max-width:420px){#tab4 .path-btns{grid-template-columns:1fr}}
+#tab4 .pb{border:2px solid #1f3b4d;background:var(--surface);color:#1f3b4d;border-radius:10px;padding:11px 8px;font:inherit;font-weight:800;font-size:.92rem;cursor:pointer}
+#tab4 .pb.on{background:#1f3b4d;color:#fff}
+#tab4 .pb.closed.on{background:#1f9d55;border-color:#1f9d55}
 #tab4 .ft-sum .stats{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 #tab4 .ft-sum .st{background:var(--surface-2);border-radius:10px;padding:8px 10px;display:flex;flex-direction:column;gap:2px}
 #tab4 .ft-sum .st .k{font-size:.78rem;color:var(--muted)}
@@ -2334,7 +2339,7 @@ function tx(mode, fn){
   });
 }
 const strip = r => ({ id: r.id, report: r.report, merged: r.merged, created: r.created,
-  siteCoord: r.siteCoord || null, siteSrc: r.siteSrc || '', siteShort: !!r.siteShort, siteManual: !!r.siteManual, useSite: !!r.useSite,
+  siteCoord: r.siteCoord || null, siteSrc: r.siteSrc || '', siteShort: !!r.siteShort, siteManual: !!r.siteManual, useSite: !!r.useSite, pathMode: r.pathMode || null,
   photos: r.photos.map(p => ({ id: p.id, blob: p.blob, time: p.time, lat: p.lat, lon: p.lon, acc: p.acc })) });
 async function save(r){ if (db) await tx('readwrite', st => st.put(strip(r))); }
 async function del(id){ if (db) await tx('readwrite', st => st.delete(id)); }
@@ -2384,29 +2389,71 @@ function hull(pts){
   up.pop(); lo.pop(); return lo.concat(up);
 }
 // المساحة = مساحة المضلع الذي يحيط بكل نقاط الصور (بالمتر المربع)
-function summary(photos, site){
+// mode: 'open' = مسار مفتوح، 'closed' = محيطي مغلق، غير ذلك = لم يُحدَّد
+function segsCross(a, b, c, d){
+  const o = (p, q, r) => Math.sign((q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x));
+  return o(a, b, c) * o(a, b, d) < 0 && o(c, d, a) * o(c, d, b) < 0;
+}
+function summary(photos, site, mode){
   const all = photos.filter(p => p.lat != null), g = all.filter(goodAcc);
   const nPhotos = g.length; if (site) g.unshift(site);
-  const out = { total: photos.length, withGps: all.length, used: nPhotos, excluded: all.length - nPhotos, path: 0, area: null, per100: null, pts: [], hull: [], note: '' };
-  for (let i = 1; i < g.length; i++) out.path += dist(g[i - 1], g[i]);
+  const out = { total: photos.length, withGps: all.length, used: nPhotos, excluded: all.length - nPhotos, mode: mode === 'open' || mode === 'closed' ? mode : null,
+    path: 0, closing: 0, distance: 0, area: null, per100: null, pts: [], hull: [], note: '', crossing: false };
+  for (let i = 1; i < g.length; i++) out.path += dist(g[i - 1], g[i]);          // مجموع المسافات بالتتابع
   out.far = g.length >= 2 ? Math.max(...g.slice(1).map(p => dist(g[0], p))) : null;
   if (g.length){
     const lat0 = g.reduce((s, p) => s + p.lat, 0) / g.length, lon0 = g.reduce((s, p) => s + p.lon, 0) / g.length, k = Math.PI / 180;
     out.pts = g.map(p => ({ x: (p.lon - lon0) * k * R * Math.cos(lat0 * k), y: (p.lat - lat0) * k * R, n: p.isSite ? '★' : photos.indexOf(p) + 1 }));
-    out.hull = hull(out.pts);
   }
   const accs = g.filter(p => p.acc != null).map(p => p.acc), avgAcc = accs.length ? accs.reduce((s, a) => s + a, 0) / accs.length : null;
-  if (out.hull.length >= 3){
-    let a = 0; for (let i = 0; i < out.hull.length; i++){ const p = out.hull[i], q = out.hull[(i + 1) % out.hull.length]; a += p.x * q.y - q.x * p.y; }
-    out.area = Math.abs(a) / 2;
-    if (out.area >= 1) out.per100 = nPhotos / out.area * 100;
-    out.note = 'المساحة محسوبة من الشكل الذي يحيط بنقاط التصوير.' + (avgAcc != null ? ` متوسط دقة GPS ±${Math.round(avgAcc)} م، فالأرقام تقريبية.` : '');
+  const accTxt = avgAcc != null ? ` متوسط دقة GPS ±${Math.round(avgAcc)} م، فالأرقام تقريبية.` : '';
+  if (out.mode === 'closed'){
+    // يُوصل آخر نقطة بأول نقطة فقط في هذا الوضع
+    if (g.length >= 2) out.closing = dist(g[g.length - 1], g[0]);
+    out.distance = out.path + out.closing;
+    if (g.length >= 3){
+      let a = 0; const P = out.pts;
+      for (let i = 0; i < P.length; i++){ const p = P[i], q = P[(i + 1) % P.length]; a += p.x * q.y - q.x * p.y; }
+      out.area = Math.abs(a) / 2; out.hull = P.slice();
+      for (let i = 0; i < P.length && !out.crossing; i++) for (let j = i + 2; j < P.length; j++){
+        if (i === 0 && j === P.length - 1) continue;
+        if (segsCross(P[i], P[(i + 1) % P.length], P[j], P[(j + 1) % P.length])){ out.crossing = true; break; }
+      }
+      if (out.area >= 1) out.per100 = nPhotos / out.area * 100;
+      out.note = 'محيط مغلق: جُمعت كل الأضلاع بالترتيب مع ضلع الرجوع من آخر نقطة إلى أول نقطة، والمساحة داخل هذا المحيط.' + accTxt +
+        (out.crossing ? ' ⚠ المسار يقطع نفسه (الترتيب ليس دائرياً حول الموقع)، فالمساحة غير دقيقة.' : '');
+    } else out.note = 'تحتاج 3 نقاط على الأقل لحساب المساحة.';
+  } else if (out.mode === 'open'){
+    out.distance = out.path;
+    out.note = 'مسار مفتوح: جُمعت المسافات بين النقاط بالتتابع من البداية إلى النهاية، دون الرجوع للبداية ودون حساب مساحة.' + accTxt;
   } else {
-    out.note = g.length < 3 ? 'تحتاج 3 صور على الأقل بإحداثيات دقيقة من أماكن مختلفة لحساب المساحة.' : 'النقاط على خط واحد تقريباً، لا توجد مساحة.';
+    out.distance = out.path;
+    out.note = 'لم يُحدَّد نوع المسار بعد. اختر «إنهاء كمسار مفتوح» أو «إغلاق المحيط وحساب المساحة».';
   }
   if (site) out.note = 'نقطة البداية: إحداثيات البلاغ من الجدول المرفق. ' + out.note;
   if (out.excluded) out.note += ` استُبعدت ${out.excluded} صورة من الحساب لأن دقتها أضعف من ±${accLimit()} م.`;
   return out;
+}
+const fmtKm = m => `${(m / 1000).toLocaleString('en-US', { minimumFractionDigits: 3, maximumFractionDigits: 3 })} كم`;
+const fmtMeters = m => `${m.toLocaleString('en-US', { maximumFractionDigits: 1 })} م`;
+// قائمة الأرقام المعروضة (في الصفحة والتصدير)
+function pathStats(sm){
+  const enough = sm.pts.length >= 2;
+  const typeTxt = sm.mode === 'closed' ? 'محيطي مغلق' : sm.mode === 'open' ? 'مسار مفتوح' : 'لم يُحدَّد بعد';
+  const dLabel = sm.mode === 'closed' ? 'المسافة المقطوعة (طول المحيط)' : sm.mode === 'open' ? 'المسافة المقطوعة' : 'المسافة المقطوعة حتى الآن';
+  const list = [
+    ['نوع المسار', typeTxt],
+    ['عدد صور الموقع', sm.total + (sm.used !== sm.total ? ` (المحسوبة ${sm.used})` : '')],
+    [`${dLabel} بالكيلومتر`, enough ? fmtKm(sm.distance) : '—'],
+    [`${dLabel} بالمتر`, enough ? fmtMeters(sm.distance) : '—']
+  ];
+  if (sm.mode === 'closed'){
+    list.push(['المساحة بالمتر المربع', sm.area != null ? `${sm.area.toLocaleString('en-US', { maximumFractionDigits: 1 })} م²` : '—']);
+    list.push(['المساحة بالكيلومتر المربع', sm.area != null ? `${(sm.area / 1e6).toLocaleString('en-US', { maximumFractionDigits: 6 })} كم²` : '—']);
+    list.push(['الصور داخل كل 100 م²', sm.per100 != null ? fmtNum(sm.per100, 1) : '—']);
+    list.push(['ضلع الرجوع (آخر نقطة ← أول نقطة)', enough ? fmtMeters(sm.closing) : '—']);
+  }
+  return list;
 }
 // رسم مخطط صغير لمواقع الصور
 function drawPlot(c, sm, cs, colors){
@@ -2417,15 +2464,17 @@ function drawPlot(c, sm, cs, colors){
   const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
   const span = Math.max(maxX - minX, maxY - minY, 4), s = Math.min((W - pad * 2), (H - pad * 2)) / span;
   const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2, P = p => [W / 2 + (p.x - cx) * s, H / 2 - (p.y - cy) * s];
-  if (sm.hull.length >= 3){ x.beginPath(); sm.hull.forEach((p, i) => { const [a, b] = P(p); i ? x.lineTo(a, b) : x.moveTo(a, b); }); x.closePath(); x.fillStyle = col.fill; x.fill(); x.strokeStyle = col.line; x.lineWidth = 2; x.stroke(); }
-  x.setLineDash([6, 5]); x.strokeStyle = col.acc; x.lineWidth = 1.5; x.beginPath();
-  sm.pts.forEach((p, i) => { const [a, b] = P(p); i ? x.lineTo(a, b) : x.moveTo(a, b); }); x.stroke(); x.setLineDash([]);
-  x.font = 'bold 15px Cairo, Tahoma, sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle';
-  sm.pts.forEach(p => { const [a, b] = P(p); x.fillStyle = col.acc; x.beginPath(); x.arc(a, b, 12, 0, Math.PI * 2); x.fill(); x.fillStyle = '#fff'; x.fillText(String(p.n), a, b + 1); });
+  const line = () => { x.beginPath(); sm.pts.forEach((p, i) => { const [a, b] = P(p); i ? x.lineTo(a, b) : x.moveTo(a, b); }); };
+  if (sm.mode === 'closed' && sm.pts.length >= 3){ line(); x.closePath(); x.fillStyle = col.fill; x.fill(); x.strokeStyle = col.line; x.lineWidth = 3; x.stroke(); }
+  else if (sm.mode === 'open'){ line(); x.strokeStyle = col.line; x.lineWidth = 3; x.stroke(); }
+  else { x.setLineDash([6, 5]); line(); x.strokeStyle = col.acc; x.lineWidth = 1.5; x.stroke(); x.setLineDash([]); }
+  const z = Math.max(1, W / 600);   // تكبير الرموز مع حجم الرسم
+  x.font = `bold ${Math.round(15 * z)}px Cairo, Tahoma, sans-serif`; x.textAlign = 'center'; x.textBaseline = 'middle';
+  sm.pts.forEach(p => { const [a, b] = P(p); x.fillStyle = col.acc; x.beginPath(); x.arc(a, b, 12 * z, 0, Math.PI * 2); x.fill(); x.fillStyle = '#fff'; x.fillText(String(p.n), a, b + 1); });
   // مقياس الرسم
   const nice = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000].find(v => v * s >= 50) || 1000;
-  x.strokeStyle = col.ink; x.fillStyle = col.ink; x.lineWidth = 2; x.beginPath(); x.moveTo(pad, H - 18); x.lineTo(pad + nice * s, H - 18); x.stroke();
-  x.font = '13px Tahoma, sans-serif'; x.fillText(`${nice} م`, pad + nice * s / 2, H - 30);
+  x.strokeStyle = col.ink; x.fillStyle = col.ink; x.lineWidth = 2 * z; x.beginPath(); x.moveTo(pad, H - 18 * z); x.lineTo(pad + nice * s, H - 18 * z); x.stroke();
+  x.font = `${Math.round(13 * z)}px Tahoma, sans-serif`; x.fillText(`${nice} م`, pad + nice * s / 2, H - 34 * z);
 }
 
 // ---------- عرض الجدول ----------
@@ -2520,15 +2569,19 @@ function render(){
     }
 
     // الملخص: المساحة وعدد الصور
-    const sm = summary(r.photos, sitePt(r));
+    const sm = summary(r.photos, sitePt(r), r.pathMode);
     const sb = document.createElement('div'); sb.className = 'ft-sum';
     sb.innerHTML = `<div class="ft-ch">ملخص الموقع</div><div class="stats"></div><canvas class="plot" width="600" height="360" aria-label="مخطط مواقع الصور"></canvas><p class="note"></p>`;
-    const stats = [
-      ['عدد صور الموقع', sm.total + (sm.used !== sm.total ? ` (المحسوبة ${sm.used})` : '')],
-      [`أبعد صورة عن ${refName(r)}`, sm.far != null ? fmtM(sm.far) : '—'],
-      ['المساحة', sm.area != null ? `${fmtNum(sm.area)} م²` : '—'],
-      ['عدد الصور داخل كل 100 م²', sm.per100 != null ? fmtNum(sm.per100, 1) + ' صورة' : '—']
-    ];
+    const stats = pathStats(sm);
+    const pm = document.createElement('div'); pm.className = 'path-btns';
+    pm.innerHTML = `<button type="button" class="pb open">↗ إنهاء كمسار مفتوح</button><button type="button" class="pb closed">⟲ إغلاق المحيط وحساب المساحة</button>`;
+    const setMode = async m => { r.pathMode = r.pathMode === m ? null : m; await save(r); render();
+      say(r.pathMode === 'open' ? 'حُسب المسار كمسار مفتوح.' : r.pathMode === 'closed' ? 'أُغلق المحيط وحُسبت المساحة.' : 'أُلغي اختيار نوع المسار.'); };
+    pm.querySelector('.open').classList.toggle('on', r.pathMode === 'open');
+    pm.querySelector('.closed').classList.toggle('on', r.pathMode === 'closed');
+    pm.querySelector('.open').onclick = () => setMode('open');
+    pm.querySelector('.closed').onclick = () => setMode('closed');
+    sb.insertBefore(pm, sb.querySelector('.stats'));
     stats.forEach(([k, v]) => { const d = document.createElement('div'); d.className = 'st'; d.innerHTML = '<span class="k"></span><b class="v"></b>'; d.querySelector('.k').textContent = k; d.querySelector('.v').textContent = v; sb.querySelector('.stats').appendChild(d); });
     sb.querySelector('.note').textContent = sm.note;
     const pc = sb.querySelector('.plot');
@@ -2571,14 +2624,7 @@ function download(blob, name){
 const PLOT_COLORS = { bg: '#f3f6f4', ink: '#152420', acc: '#1f3b4d', fill: 'rgba(31,157,85,.18)', line: '#1f9d55' };
 function plotCanvas(sm, w, h){ const c = document.createElement('canvas'); c.width = w || 900; c.height = h || 540; drawPlot(c, sm, null, PLOT_COLORS); return c; }
 function distOf(r, p){ const ref = refPhoto(r); return distLabel(r, p, ref, ref && p.lat != null ? dist(ref, p) : null).replace('📏 ', ''); }
-function statsList(sm){
-  return [
-    ['عدد صور الموقع', sm.total + (sm.used !== sm.total ? ` (المحسوبة ${sm.used})` : '')],
-    ['أبعد صورة عن نقطة البداية', sm.far != null ? fmtM(sm.far) : '—'],
-    ['المساحة', sm.area != null ? `${fmtNum(sm.area)} م²` : '—'],
-    ['الصور داخل كل 100 م²', sm.per100 != null ? fmtNum(sm.per100, 1) : '—']
-  ];
-}
+function statsList(sm){ return pathStats(sm); }
 // قص الصورة لتملأ المربع (مثل العرض) بجودة عالية
 function drawCover(x, im, dx, dy, dw, dh){
   const iw = im.naturalWidth || im.width, ih = im.naturalHeight || im.height, s = Math.max(dw / iw, dh / ih);
@@ -2634,7 +2680,7 @@ $('ftXlsx').onclick = async () => {
         }
         ws.getRow(imgRow).height = CELLH * 0.75; ws.getRow(capRow).height = 30; rn += 2;
       }
-      const sm = summary(r.photos, sitePt(r));
+      const sm = summary(r.photos, sitePt(r), r.pathMode);
       wide('ملخص الموقع', { font: { color: { argb: 'FFFFFFFF' } }, fill: 'FF1F3B4D' });
       statsList(sm).forEach(([k, v]) => wide(`${k}: ${v}`));
       if (sm.pts.length){
@@ -2681,24 +2727,30 @@ $('ftPdf').onclick = async () => {
     const bar = (x, bx, y, bw, t) => { x.fillStyle = '#1f3b4d'; x.fillRect(bx, y, bw, 90); x.fillStyle = '#fff'; x.font = `bold 46px ${FONT}`; x.fillText(t, bx + bw / 2, y + 47); return y + 110; };
     for (let i = 0; i < rows.length; i++){
       say(`جاري تجهيز PDF ${i + 1} من ${rows.length}...`);
-      const r = rows[i], sm = summary(r.photos, sitePt(r)), rep = `رقم البلاغ: ${r.report || '—'}`;
+      const r = rows[i], sm = summary(r.photos, sitePt(r), r.pathMode), rep = `رقم البلاغ: ${r.report || '—'}`;
       // الصفحة الأولى: المدموجة يميناً والملخص يساراً
       let [c, x] = page(); title(x, rep);
       const top0 = M + 110, gapC = 70, rw = Math.round((CW - gapC) * 0.56), lw = CW - gapC - rw, rx = W - M - rw, lx = M;
       let y = bar(x, rx, top0, rw, COL1);
       const m = await loadImg(r.merged); drawFit(x, m, rx, y, rw, H - M - y);
       y = bar(x, lx, top0, lw, 'ملخص الموقع');
-      const st = statsList(sm), bw = (lw - 30) / 2;
+      const st = statsList(sm), bw = (lw - 30) / 2, stRows = Math.ceil(st.length / 2);
       st.forEach(([k, v], j) => {
         const bx = lx + (j % 2 === 0 ? bw + 30 : 0), by = y + Math.floor(j / 2) * 170;
         x.fillStyle = '#f1f5f3'; x.fillRect(bx, by, bw, 150);
-        x.fillStyle = '#6b7280'; x.font = `36px ${FONT}`; x.fillText(k, bx + bw / 2, by + 44);
-        x.fillStyle = '#111827'; x.font = `bold 56px ${FONT}`; x.fillText(v, bx + bw / 2, by + 104);
+        const fitFont = (t, size, bold) => { let z = size; do { x.font = `${bold ? 'bold ' : ''}${z}px ${FONT}`; z -= 2; } while (x.measureText(t).width > bw - 30 && z > 18); };
+        x.fillStyle = '#6b7280'; fitFont(k, 34, false); x.fillText(k, bx + bw / 2, by + 44);
+        x.fillStyle = '#111827'; fitFont(v, 54, true); x.fillText(v, bx + bw / 2, by + 104);
       });
-      y += 2 * 170 + 10;
-      const noteY = H - M - 20;
+      y += stRows * 170 + 10;
+      // تقسيم الملاحظة على أسطر داخل عرض العمود
+      x.font = `32px ${FONT}`;
+      const noteLines = []; let ln = '';
+      for (const w of sm.note.split(' ')){ const t = ln ? ln + ' ' + w : w; if (x.measureText(t).width > lw - 20 && ln){ noteLines.push(ln); ln = w; } else ln = t; }
+      if (ln) noteLines.push(ln);
+      const noteY = H - M - 20 - (noteLines.length - 1) * 44;
       if (sm.pts.length){ const room = noteY - 50 - y; if (room > 250) drawFit(x, plotCanvas(sm, 1500, 900), lx, y, lw, room); }
-      x.fillStyle = '#6b7280'; x.font = `32px ${FONT}`; x.fillText(sm.note, lx + lw / 2, noteY);
+      x.fillStyle = '#6b7280'; x.font = `32px ${FONT}`; noteLines.forEach((t, i) => x.fillText(t, lx + lw / 2, noteY + i * 44));
       add(c);
       // صفحات صور الموقع: 20 صورة (5 × 4)
       const COLS = 5, ROWS = 4, PER = COLS * ROWS, gap = 34, top = M + 180, capH = 92;
