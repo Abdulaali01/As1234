@@ -171,6 +171,22 @@ body{background:var(--bg);color:var(--ink);font-family:"Tajawal","Cairo",system-
 #tab2 #preview{display:block;width:100%;max-height:300px;object-fit:contain;background:#080808;border-radius:6px;margin:6px 0}
 #tab2 #next{background:#1b7a3d;font-weight:bold;flex:1}
 #tab2 #prev{background:#6b7a80}
+/* شريط الحلول السريعة + المراجعة السريعة */
+#tab2 .quick{display:flex;flex-wrap:wrap;gap:6px;align-items:center;background:#eef6f4;border:1px solid #cfe3de;border-radius:10px;padding:10px;margin-bottom:10px}
+#tab2 .quick label{flex-basis:100%;font-size:.9rem;display:flex;gap:8px;align-items:center;cursor:pointer}
+#tab2 .quick label input{width:20px;height:20px;accent-color:#145d54}
+#tab2 .quick button{margin:0;padding:9px 12px;flex:1;min-width:150px}
+#tab2 #acceptAll{background:#1b7a3d;font-weight:bold}
+#tab2 #applyAll{background:#2f6f9a}
+#tab2 #viewBtn{background:#3c5a66}
+#tab2 .rgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px}
+#tab2 .rt{background:#f2f6f7;border:2px solid transparent;border-radius:10px;padding:6px;display:flex;flex-direction:column;gap:6px}
+#tab2 .rt.missing{border-color:#e0a39e;background:#fdf1f0}
+#tab2 .rt img{width:100%;height:170px;object-fit:contain;background:#080808;border-radius:6px;cursor:pointer;display:block}
+#tab2 .rt .rh{display:flex;justify-content:space-between;align-items:center;font-size:.85rem;font-weight:bold}
+#tab2 .rt .rh button{margin:0;padding:5px 10px;background:#3c5a66;font-size:.8rem}
+#tab2 .rt input{width:100%;box-sizing:border-box;padding:8px;border:1px solid #8fb9b1;border-radius:8px;direction:ltr;text-align:left}
+#tab2 .rt.missing input{border-color:#b3261e}
 
 /* ===== التبويب 3: دمج الصور ===== */
 #tab3{font-family:Tahoma,Arial,sans-serif;color:#111827}
@@ -472,12 +488,19 @@ body{background:var(--bg);color:var(--ink);font-family:"Tajawal","Cairo",system-
 <!-- ================= التبويب 2 ================= -->
 <section id="tab2" role="tabpanel" hidden>
 <main><h1>استخراج رقم البلاغ وصورة الموقع من PDF</h1>
-<p>يستلم ملف PDF من الخطوة 1 تلقائياً (أو اختر ملفاً يدوياً). عدّل القص مباشرة على الصفحة، راجع الرقم، ثم اضغط «حفظ والتالي» حتى آخر صفحة — يُرسل ملف Excel تلقائياً إلى الخطوة 3.</p>
+<p>يستلم ملف PDF من الخطوة 1 تلقائياً (أو اختر ملفاً يدوياً). تظهر كل الصفحات في «المراجعة السريعة»: عدّل الرقم مباشرة تحت الصورة، واضغط على أي صورة لتعديل قصها فقط إذا احتاجت. القص الذي تعدّله مرة واحدة يُطبَّق على باقي الصفحات تلقائياً، ثم اضغط «اعتماد الكل وإرسال».</p>
 <section class="card"><input id="file" type="file" accept="application/pdf,.pdf"><p id="srcNote" hidden></p><div class="row"><button id="run">تنفيذ</button><button id="export" disabled>إرسال Excel إلى الدمج ←</button><button id="exportDl" disabled>تنزيل Excel</button></div><progress id="progress" value="0" max="100"></progress><p id="status" class="hint">بانتظار ملف PDF من الخطوة 1، أو اختر ملفاً.</p></section>
 
 <section id="results" class="card" hidden>
- <div class="thumbs" id="thumbs"></div>
- <div class="editor">
+ <div class="quick">
+  <label><input type="checkbox" id="tplOn" checked> تذكّر القص الذي أعدّله وطبّقه تلقائياً على باقي الصفحات (والملفات القادمة)</label>
+  <button id="acceptAll">✓ اعتماد الكل وإرسال إلى الدمج</button>
+  <button id="applyAll">📐 تطبيق هذا القص على كل الصفحات</button>
+  <button id="viewBtn">✎ المحرر التفصيلي</button>
+ </div>
+ <div class="rgrid" id="rgrid"></div>
+ <div class="thumbs" id="thumbs" hidden></div>
+ <div class="editor" id="editorBox" hidden>
   <div>
    <div class="toolbar row">
     <button id="zoomout">🔍 −</button><button id="zoomin">🔍 +</button><button id="fit">ملاءمة العرض</button>
@@ -1388,8 +1411,17 @@ initStore();
 (function(){
 const $=s=>document.querySelector(s), items=[];
 let cur=-1, zoom=1, worker=null, busy=false, totalPages=0, waitingNext=false, pdfDoc=null, numMode=false;
-let injected=null, queued=null;
+let injected=null, queued=null, view='grid';
 const RENDER_SCALE=2.2;
+
+// ===== قالب القص: آخر قص عدّلته يدوياً يُطبَّق على باقي الصفحات =====
+let tpl=null;try{tpl=JSON.parse(localStorage.getItem('cropTpl')||'null')}catch(_){tpl=null}
+try{const v=localStorage.getItem('cropTplOn');if(v!==null)$('#tplOn').checked=v==='1'}catch(_){}
+$('#tplOn').addEventListener('change',()=>{try{localStorage.setItem('cropTplOn',$('#tplOn').checked?'1':'0')}catch(_){}
+ say($('#tplOn').checked?'سيُطبَّق آخر قص تعدّله على باقي الصفحات تلقائياً.':'أُوقف التطبيق التلقائي: كل صفحة تأخذ القص التلقائي الخاص بها.')});
+const useTpl=()=>$('#tplOn').checked&&tpl&&tpl.w>.02&&tpl.h>.02;
+function saveTpl(b){tpl={x:b.x,y:b.y,w:b.w,h:b.h};try{localStorage.setItem('cropTpl',JSON.stringify(tpl))}catch(_){}}
+
 $('#run').onclick=run;
 $('#export').onclick=()=>exportExcel('send');
 $('#exportDl').onclick=()=>exportExcel('download');
@@ -1429,7 +1461,7 @@ function photoBounds(src){
 function renderCrop(it){const b=it.bounds,s=it.source,w=s.width,h=s.height;
  const crop=part(s,Math.round(w*b.x),Math.round(h*b.y),Math.max(1,Math.round(w*b.w)),Math.max(1,Math.round(h*b.h)));
  const out=canvas(crop.width,crop.height),ctx=out.getContext('2d');ctx.fillStyle='#080808';ctx.fillRect(0,0,out.width,out.height);ctx.drawImage(crop,0,0);
- it.url=out.toDataURL('image/jpeg',.88);if(it.thumbImg)it.thumbImg.src=it.url;if(items[cur]===it)$('#preview').src=it.url}
+ it.url=out.toDataURL('image/jpeg',.88);if(it.thumbImg)it.thumbImg.src=it.url;if(it.gridImg)it.gridImg.src=it.url;if(items[cur]===it)$('#preview').src=it.url}
 
 // ===== التعرف على رقم البلاغ (محسّن) =====
 async function getWorker(){if(!worker){if(!window.Tesseract)throw new Error('مكتبة التعرف غير محملة');worker=await Tesseract.createWorker('eng')}return worker}
@@ -1538,39 +1570,77 @@ async function run(){
  const f=injected||$('#file').files[0];if(!f){say('اختر ملف PDF أولًا، أو أنشئه من الخطوة 1.');return}
  if(busy){say('المعالجة جارية، انتظر حتى تنتهي.');return}
  if(!window.pdfjsLib||!window.Tesseract||!window.ExcelJS){say('تعذر تحميل إحدى المكتبات. افتح الصفحة مع اتصال بالإنترنت ثم أعد المحاولة.');return}
- busy=true;$('#run').disabled=true;$('#export').disabled=true;$('#exportDl').disabled=true;$('#extract').disabled=true;$('#thumbs').replaceChildren();$('#results').hidden=true;items.length=0;cur=-1;waitingNext=false;$('#progress').value=0;
+ busy=true;$('#run').disabled=true;$('#export').disabled=true;$('#exportDl').disabled=true;$('#extract').disabled=true;$('#thumbs').replaceChildren();$('#rgrid').replaceChildren();$('#results').hidden=true;items.length=0;cur=-1;waitingNext=false;$('#progress').value=0;setView('grid');
  try{
   pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
   const pdf=await pdfjsLib.getDocument({data:await f.arrayBuffer()}).promise;pdfDoc=pdf;totalPages=pdf.numPages;
   say('جاري تشغيل التعرف على الأرقام...');await getWorker();
   for(let p=1;p<=totalPages;p++){
-   say(`معالجة الصفحة ${p} من ${totalPages}... (يمكنك البدء بتعديل الصفحات الجاهزة)`);
+   say(`معالجة الصفحة ${p} من ${totalPages}... (يمكنك البدء بمراجعة الصفحات الجاهزة)`);
    const page=await pdf.getPage(p),viewport=page.getViewport({scale:RENDER_SCALE});
    const src=canvas(viewport.width,viewport.height);await page.render({canvasContext:src.getContext('2d'),viewport}).promise;
-   const it={page:p,number:'',url:'',candidates:[],source:src,bounds:photoBounds(src),done:false};it.autoBounds={...it.bounds};
+   const autoB=photoBounds(src);
+   const it={page:p,number:'',url:'',candidates:[],source:src,bounds:useTpl()?{...tpl}:autoB,done:false};it.autoBounds={...autoB};
    try{it.number=await findNumber(it)}catch(e){console.error(e)}
-   renderCrop(it);items.push(it);addThumb(it,items.length-1);
+   renderCrop(it);items.push(it);addThumb(it,items.length-1);addTile(it,items.length-1);
    if(items.length===1){$('#results').hidden=false;openPage(0)}
    else if(waitingNext&&cur===items.length-2){waitingNext=false;openPage(items.length-1)}
    updateNav();$('#progress').value=Math.round(p/totalPages*100);
   }
-  $('#export').disabled=false;$('#exportDl').disabled=false;say(`اكتملت معالجة ${items.length} صفحة. راجع كل صفحة ثم اضغط «حفظ والتالي» حتى آخر صفحة، فيُرسل Excel إلى الدمج.`);
+  $('#export').disabled=false;$('#exportDl').disabled=false;
+  const miss=items.filter(x=>!x.number).length;
+  say(`اكتملت معالجة ${items.length} صفحة.${miss?` ${miss} صفحة بدون رقم (باللون الأحمر) — اكتب الرقم تحت صورتها.`:''} إذا كان القص صحيحاً اضغط «✓ اعتماد الكل وإرسال إلى الدمج». لتعديل قص صفحة اضغط على صورتها، وسيُطبَّق التعديل على البقية.`);
  }catch(e){console.error(e);say('حدث خطأ: '+(e.message||e))}finally{busy=false;$('#run').disabled=false;$('#extract').disabled=false;
   if(queued){queued=null;run()}}
 }
 
+// ===== المراجعة السريعة (شبكة كل الصفحات) =====
+function setView(v){view=v;const grid=v==='grid';
+ $('#rgrid').hidden=!grid;$('#thumbs').hidden=grid;$('#editorBox').hidden=grid;
+ $('#viewBtn').textContent=grid?'✎ المحرر التفصيلي':'▦ المراجعة السريعة';
+ if(!grid){applyZoom();drawSel();drawNumBox()}}
+function showEditor(i){if(cur>=0&&view==='edit')saveCurrent();setView('edit');openPage(i);$('#results').scrollIntoView({block:'start',behavior:'smooth'})}
+function addTile(it,i){const d=document.createElement('div');d.className='rt';
+ d.innerHTML='<div class="rh"><span></span><button type="button">✎ تعديل القص</button></div><img alt=""><input type="text" placeholder="INC-00-00-000000">';
+ d.querySelector('span').textContent='صفحة '+it.page;
+ const img=d.querySelector('img');img.src=it.url;img.alt='قص صفحة '+it.page;img.onclick=()=>showEditor(i);
+ d.querySelector('button').onclick=()=>showEditor(i);
+ const inp=d.querySelector('input');inp.value=it.number;
+ inp.oninput=()=>{it.number=inp.value.trim();if(items[cur]===it)$('#num').value=it.number;updateThumb(it)};
+ inp.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();const n=items[i+1];if(n&&n.gridIn)n.gridIn.focus()}};
+ it.tile=d;it.gridImg=img;it.gridIn=inp;$('#rgrid').append(d);updateThumb(it)}
+$('#viewBtn').onclick=()=>{if(view==='grid')showEditor(Math.max(0,cur));else{saveCurrent();setView('grid')}};
+
+// تطبيق القص الحالي على كل الصفحات
+$('#applyAll').onclick=()=>{const it=items[cur];if(!it){say('لا توجد صفحات بعد.');return}
+ saveTpl(it.bounds);$('#tplOn').checked=true;try{localStorage.setItem('cropTplOn','1')}catch(_){}
+ items.forEach(x=>{x.bounds={...tpl};renderCrop(x)});
+ say(`طُبّق قص الصفحة ${it.page} على كل الصفحات (${items.length})${items.length<totalPages?' وعلى الصفحات القادمة':''}.`)};
+
+// اعتماد الكل دفعة واحدة
+let acceptArmed=false;const ACCEPT_TXT='✓ اعتماد الكل وإرسال إلى الدمج';
+$('#acceptAll').onclick=()=>{if(!items.length)return;
+ if(items.length<totalPages){say(`انتظر حتى تنتهي معالجة كل الصفحات (${items.length} من ${totalPages}).`);return}
+ if(view==='edit')saveCurrent();
+ const miss=items.filter(x=>!x.number).length;
+ if(miss&&!acceptArmed){acceptArmed=true;$('#acceptAll').textContent=`⚠️ ${miss} صفحة بدون رقم — اضغط مرة ثانية للإرسال`;
+  setTimeout(()=>{acceptArmed=false;$('#acceptAll').textContent=ACCEPT_TXT},5000);return}
+ acceptArmed=false;$('#acceptAll').textContent=ACCEPT_TXT;
+ items.forEach(x=>{x.done=true;updateThumb(x)});exportExcel('send')};
+
 // ===== شريط الصفحات =====
 function addThumb(it,i){const d=document.createElement('div');d.className='thumb';const img=document.createElement('img');img.src=it.url;img.alt='صفحة '+it.page;
  const cap=document.createElement('div');cap.className='cap';d.append(img,cap);d.onclick=()=>{saveCurrent();openPage(i)};it.thumb=d;it.thumbImg=img;it.cap=cap;$('#thumbs').append(d);updateThumb(it)}
-function updateThumb(it){if(!it.cap)return;it.cap.textContent=`${it.done?'✓ ':''}ص ${it.page} • ${it.number||'بدون رقم'}`;it.thumb.classList.toggle('done',it.done);it.thumb.classList.toggle('missing',!it.number)}
+function updateThumb(it){if(it.cap){it.cap.textContent=`${it.done?'✓ ':''}ص ${it.page} • ${it.number||'بدون رقم'}`;it.thumb.classList.toggle('done',it.done);it.thumb.classList.toggle('missing',!it.number)}
+ if(it.tile){it.tile.classList.toggle('missing',!it.number);if(document.activeElement!==it.gridIn)it.gridIn.value=it.number}}
 
 // ===== المحرر =====
 function openPage(i){if(i<0||i>=items.length)return;cur=i;const it=items[i];
  if(!it.pageUrl)it.pageUrl=it.source.toDataURL('image/jpeg',.92);
  $('#pageImg').src=it.pageUrl;$('#num').value=it.number;$('#preview').src=it.url;
  $('#counter').textContent=`الصفحة ${it.page} من ${totalPages}`;
- items.forEach((x,k)=>x.thumb.classList.toggle('active',k===i));it.thumb.scrollIntoView({block:'nearest',inline:'nearest',behavior:'smooth'});
- $('#stage').scrollTop=0;applyZoom();drawSel();drawNumBox();setNumMode(false);$('#ocrInfo').textContent=it.ocrText?('المقروء: '+it.ocrText.slice(0,140)):'';updateNav();$('#num').focus({preventScroll:true})}
+ items.forEach((x,k)=>x.thumb.classList.toggle('active',k===i));if(view==='edit')it.thumb.scrollIntoView({block:'nearest',inline:'nearest',behavior:'smooth'});
+ $('#stage').scrollTop=0;applyZoom();drawSel();drawNumBox();setNumMode(false);$('#ocrInfo').textContent=it.ocrText?('المقروء: '+it.ocrText.slice(0,140)):'';updateNav();if(view==='edit')$('#num').focus({preventScroll:true})}
 function updateNav(){if(cur<0)return;$('#prev').disabled=cur===0;$('#next').textContent=cur===totalPages-1?'✓ حفظ وإرسال إلى الدمج':'حفظ والتالي ←'}
 function saveCurrent(){const it=items[cur];if(!it)return;it.number=$('#num').value.trim();updateThumb(it)}
 function applyZoom(){const st=$('#stage');$('#wrap').style.width=Math.round((st.clientWidth||800)*zoom)+'px';$('#zoomLabel').textContent=Math.round(zoom*100)+'٪'}
@@ -1579,6 +1649,10 @@ function drawNumBox(){const it=items[cur],n=$('#nbox');if(!it||!it.numBox){n.sty
 function setNumMode(on){numMode=on;$('#wrap').classList.toggle('nummode',on);$('#pickNum').classList.toggle('on',on);$('#pickNum').textContent=on?'اسحب الآن حول رقم البلاغ… (إلغاء)':'✏️ حدّد مربع الرقم بنفسك'}
 function drawSel(){const it=items[cur];if(!it)return;const b=it.bounds,s=$('#sel').style;s.left=b.x*100+'%';s.top=b.y*100+'%';s.width=b.w*100+'%';s.height=b.h*100+'%'}
 let raf=0;function schedulePreview(){if(raf)return;raf=requestAnimationFrame(()=>{raf=0;if(items[cur])renderCrop(items[cur])})}
+// بعد تعديل القص يدوياً: يُحفظ كقالب ويُطبَّق على الصفحات التي لم تُعدَّل يدوياً
+function learnCrop(it){it.userCropped=true;if(!$('#tplOn').checked)return;saveTpl(it.bounds);let n=0;
+ items.forEach(x=>{if(x!==it&&!x.userCropped){x.bounds={...tpl};renderCrop(x);n++}});
+ if(n)say(`طُبّق قص الصفحة ${it.page} على ${n} صفحة أخرى${items.length<totalPages?' وعلى الصفحات القادمة':''}. الصفحات التي عدّلتها بنفسك بقيت كما هي.`)}
 const clamp=(v,a,b)=>Math.min(b,Math.max(a,v));
 function pos(e){const r=$('#wrap').getBoundingClientRect();return {x:clamp((e.clientX-r.left)/r.width,0,1),y:clamp((e.clientY-r.top)/r.height,0,1)}}
 function hit(p,b){const r=$('#wrap').getBoundingClientRect(),tx=14/r.width,ty=14/r.height;
@@ -1603,7 +1677,9 @@ function cursorFor(h){if(h.mode==='move')return 'move';if(h.mode==='new')return 
   it.bounds={x:x0,y:y0,w:x1-x0,h:y1-y0};drawSel();schedulePreview()});
  const end=()=>{const it=items[cur];if(!drag||!it)return;
   if(drag.mode==='num'){drag=null;setNumMode(false);if(it.numBox&&it.numBox.w>8&&it.numBox.h>4){it.manualBox=true;$('#extract').click()}else{it.numBox=null;it.manualBox=false;drawNumBox()}return}
- if(drag.mode==='new'&&(it.bounds.w<.03||it.bounds.h<.03))it.bounds=drag.orig;drag=null;drawSel();renderCrop(it)};
+  if(drag.mode==='new'&&(it.bounds.w<.03||it.bounds.h<.03))it.bounds=drag.orig;
+  const o=drag.orig,changed=['x','y','w','h'].some(k=>Math.abs(o[k]-it.bounds[k])>1e-4);
+  drag=null;drawSel();renderCrop(it);if(changed)learnCrop(it)};
  wrap.addEventListener('pointerup',end);wrap.addEventListener('pointercancel',end);
 
  $('#num').addEventListener('input',()=>{const it=items[cur];if(it){it.number=$('#num').value.trim();updateThumb(it)}});
@@ -1620,8 +1696,8 @@ function cursorFor(h){if(h.mode==='move')return 'move';if(h.mode==='new')return 
   catch(e){console.error(e);say('خطأ في الاستخراج: '+(e.message||e)+' — أعد المحاولة.')}
   finally{busy=false;btn.disabled=false;btn.textContent=old}};
  $('#pickNum').onclick=()=>setNumMode(!numMode);
- $('#auto').onclick=()=>{const it=items[cur];if(!it)return;it.bounds={...it.autoBounds};drawSel();renderCrop(it)};
- $('#full').onclick=()=>{const it=items[cur];if(!it)return;it.bounds={x:0,y:0,w:1,h:1};drawSel();renderCrop(it)};
+ $('#auto').onclick=()=>{const it=items[cur];if(!it)return;it.bounds={...it.autoBounds};it.userCropped=true;drawSel();renderCrop(it)};
+ $('#full').onclick=()=>{const it=items[cur];if(!it)return;it.bounds={x:0,y:0,w:1,h:1};drawSel();renderCrop(it);learnCrop(it)};
  $('#zoomin').onclick=()=>{zoom=Math.min(6,zoom*1.25);applyZoom()};
  $('#zoomout').onclick=()=>{zoom=Math.max(.5,zoom/1.25);applyZoom()};
  $('#fit').onclick=()=>{zoom=1;applyZoom()};
@@ -1640,7 +1716,7 @@ async function buildBook(){
  }
  return await book.xlsx.writeBuffer();
 }
-async function exportExcel(mode){if(!items.length)return;saveCurrent();$('#export').disabled=true;$('#exportDl').disabled=true;try{
+async function exportExcel(mode){if(!items.length)return;if(view==='edit')saveCurrent();$('#export').disabled=true;$('#exportDl').disabled=true;try{
  const bytes=await buildBook();
  const missing=items.filter(x=>!x.number).length,warn=missing?`\nتنبيه: ${missing} صفحة بدون رقم بلاغ.`:'';
  if(mode==='download'){
@@ -2937,4 +3013,4 @@ init();
 })();
 </script>
 </body>
-</html>
+</html
