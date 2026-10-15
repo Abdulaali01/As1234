@@ -195,6 +195,10 @@ body{background:var(--bg);color:var(--ink);font-family:"Tajawal","Cairo",system-
 #tab3 .upload{display:block;text-align:center;border:2px dashed #6366f1;border-radius:12px;padding:22px;cursor:pointer;background:#eef2ff;color:#3730a3;font-size:16px}
 #tab3 .upload input{display:none}
 #tab3 .upload.site-up{margin-top:10px;border-color:#1f3b4d;background:#eef4f7;color:#1f3b4d;padding:16px;font-weight:bold}
+#tab3 .upload.reason-up{border-color:#c2410c;background:#fff7ed;color:#9a3412}
+#tab3 #reasonNote{text-align:center;color:#9a3412;font-size:13px;margin:8px 0 0;white-space:pre-line;line-height:1.7}
+#tab3 .fbox.reason{grid-column:1/-1;border-color:#fdba74;background:#fff7ed}
+#tab3 .fbox.reason > b{background:#c2410c}
 #tab3 #siteNote{text-align:center;color:#1f3b4d;font-size:13px;margin:8px 0 0;white-space:pre-line;line-height:1.7}
 #tab3 #xlSrcNote{text-align:center;color:#065f46;font-weight:bold;font-size:14px;margin:10px 0 0}
 #tab3 .row{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:center;margin-top:12px}
@@ -374,7 +378,7 @@ body{background:var(--bg);color:var(--ink);font-family:"Tajawal","Cairo",system-
 
 <div class="shell">
   <div class="shell-inner">
-    <p class="brand">معالجة البلاغات</p>
+    <p class="brand">معالجة البلاغات <small style="font-size:.7rem;color:var(--muted);font-weight:500">إصدار 15/10 — 22:05</small></p>
     <nav class="tabs" role="tablist">
       <button class="tab" id="tabBtn0" role="tab" aria-selected="false" data-tab="0"><span class="n">📷</span>الكاميرا</button>
       <span class="arrow">←</span>
@@ -555,6 +559,11 @@ body{background:var(--bg);color:var(--ink);font-family:"Tajawal","Cairo",system-
   </label>
   <p id="siteNote" hidden></p>
 
+  <label class="upload site-up reason-up">📎 إرفاق ملف أسباب الرفض (Excel فيه عمود «سبب الرفض الفرعي»)
+    <input type="file" id="reasonFileInput" accept=".xlsx">
+  </label>
+  <p id="reasonNote" hidden></p>
+
   <div id="settings" class="hidden">
     <div class="row">
       <label>عمود رقم البلاغ: <select id="reportCol"></select></label>
@@ -608,9 +617,9 @@ body{background:var(--bg);color:var(--ink);font-family:"Tajawal","Cairo",system-
       <label>النص: <input type="text" class="lbl" id="beforeText" value="قبل"> / <input type="text" class="lbl" id="afterText" value="بعد"></label>
       <label><input type="checkbox" id="pdfHeader" checked> رقم البلاغ أعلى صفحة PDF</label>
     </div>
-    <p class="group-title">صفحة PDF: الإفادة يمين الصفحة، والإحداثيات أسفل الصورة وبجوارها مربع بنفس المقاس لكتابة الإحداثيات</p>
+    <p class="group-title">صفحة PDF: مربع الإفادة عريض أعلى الصفحة، ومربعا الإحداثيات يسار الصورة</p>
     <div class="row">
-      <label><input type="checkbox" id="showCoordsPdf" checked> إظهار الإحداثيات المستخرجة من ملف الإكسل في PDF</label>
+      <label><input type="checkbox" id="showLinkPdf" checked> إظهار رابط خرائط Google في PDF (الإحداثيات تظهر دائماً)</label>
       <label>عنوان المربع المجاور: <input type="text" id="extraTitle" value="إحداثيات الموقع (كتابة)" style="width:190px"></label>
     </div>
     <div class="summary" id="summary"></div>
@@ -1990,7 +1999,17 @@ async function attachSiteSheet(file){
     const a = analyzeSheet(ws);
     if (!a.repCol || (!a.locCol && !(a.latCol && a.lonCol))) return;
     const hName = ci => `${numToCol(ci)}${a.stats[ci] && a.stats[ci].header ? ' «' + a.stats[ci].header + '»' : ''}`;
-    info.push(`ورقة «${ws.name}»: رقم البلاغ في العمود ${hName(a.repCol)}` + (a.locCol ? ` · روابط الموقع في العمود ${hName(a.locCol)}` : ` · خط العرض ${hName(a.latCol)} وخط الطول ${hName(a.lonCol)}`));
+    // عمودا الحي والبلدية (بحسب العنوان) أينما كانا
+    let distCol = 0, muniCol = 0, dS = 0, mS = 0;
+    ws.getRow(a.headRow).eachCell((c, ci) => {
+      const h = normAr(cellTexts3(c).join(' '));
+      const d = (h === 'حي' || h === 'الحي' || h === 'اسمالحي') ? 3 : /الحي|^حي/.test(h) ? 1 : 0;
+      const m = (h === 'البلديه' || h === 'بلديه' || h === 'اسمالبلديه') ? 3 : h.includes('بلديه') ? 1 : 0;
+      if (d > dS && ci !== a.repCol && ci !== a.locCol){ dS = d; distCol = ci; }
+      if (m > mS && ci !== a.repCol && ci !== a.locCol){ mS = m; muniCol = ci; }
+    });
+    info.push(`ورقة «${ws.name}»: رقم البلاغ في العمود ${hName(a.repCol)}` + (a.locCol ? ` · روابط الموقع في العمود ${hName(a.locCol)}` : ` · خط العرض ${hName(a.latCol)} وخط الطول ${hName(a.lonCol)}`)
+      + (distCol ? ` · الحي في العمود ${hName(distCol)}` : ' · ⚠ لم أجد عمود الحي') + (muniCol ? ` · البلدية في العمود ${hName(muniCol)}` : ' · ⚠ لم أجد عمود البلدية'));
     ws.eachRow((row, ri) => {
       if (ri <= a.headRow) return;
       const repT = cellTexts3(row.getCell(a.repCol)).join(' ');
@@ -2009,7 +2028,8 @@ async function attachSiteSheet(file){
         if (inRange3(la, lo)) coords = { lat: la, lon: lo };
       }
       total++; if (coords) withC++; else if (short) shortN++;
-      const rec = { lat: coords ? coords.lat : null, lon: coords ? coords.lon : null, link, short: !coords && short };
+      const txt = ci => ci ? cellTexts3(row.getCell(ci)).join(' ').trim() : '';
+      const rec = { lat: coords ? coords.lat : null, lon: coords ? coords.lon : null, link, short: !coords && short, district: txt(distCol), municipality: txt(muniCol) };
       if (key) found[key] = rec;
       if (tail) found['#' + tail] = rec;
     });
@@ -2017,7 +2037,7 @@ async function attachSiteSheet(file){
   if (!total){ note.textContent = '⚠️ لم أجد في الملف عموداً لأرقام البلاغات مع عمود روابط/إحداثيات الموقع.'; return; }
   siteMap3 = found; try { localStorage.setItem(SITE_KEY3, JSON.stringify(siteMap3)); } catch(_) {}
   let matched = 0;
-  pairs.forEach(p => { if (!p.coordManual){ applyPairSite(p); saveFields(p); } if (p.coords) matched++; });
+  pairs.forEach(p => { if (!p.coordManual){ applyPairSite(p); saveFields(p); } applyPairArea(p); if (p.coords) matched++; });
   document.querySelectorAll('#cards .card').forEach(c => c.fieldsRefresh && c.fieldsRefresh());
   note.textContent = `✓ ${file.name}\n` + info.join('\n') +
     `\nقُرئ ${total} بلاغ، منها ${withC} بإحداثيات.` + (pairs.length ? ` رُبطت الإحداثيات مع ${matched} من ${pairs.length} صورة مدموجة.` : ' ستُربط تلقائياً عند وصول الصور المدموجة.') +
@@ -2031,18 +2051,80 @@ function applyPairSite(p){
   const rec = p.report ? lookupSite(p.report) : null;
   p.coords = rec && rec.lat != null ? { lat: rec.lat, lon: rec.lon } : null;
   p.siteLink = rec ? rec.link : ''; p.siteShort = rec ? rec.short : false; p.siteFound = !!rec;
+  applyPairArea(p);
+}
+// الحي والبلدية من جدول البلاغات (حتى لو كُتبت الإحداثيات يدوياً)
+function applyPairArea(p){
+  const rec = p.report ? lookupSite(p.report) : null;
+  p.district = rec ? (rec.district || '') : ''; p.municipality = rec ? (rec.municipality || '') : '';
 }
 const fieldKey = rep => repKey3(rep) || String(rep || '').trim();
 function saveFields(p){
   const k = fieldKey(p.report); if (!k) return;
-  fieldStore[k] = { notes: p.notes || '', extra: p.extra || '', coordManual: !!p.coordManual, coords: p.coordManual ? p.coords : null };
+  fieldStore[k] = { notes: p.notes || '', extra: p.extra || '', coordManual: !!p.coordManual, coords: p.coordManual ? p.coords : null,
+    reasonManual: !!p.reasonManual, reason: p.reasonManual ? (p.reason || '') : '' };
   try { localStorage.setItem(FIELDS_KEY3, JSON.stringify(fieldStore)); } catch(_) {}
 }
 function initPairFields(p){
   const s = fieldStore[fieldKey(p.report)] || {};
   p.notes = s.notes || ''; p.extra = s.extra || '';
+  if (s.reasonManual){ p.reasonManual = true; p.reason = s.reason || ''; } else applyPairReason(p);
   if (s.coordManual){ p.coordManual = true; p.coords = s.coords || null; p.siteLink = ''; } else applyPairSite(p);
+  applyPairArea(p);
 }
+// ================= ملف أسباب الرفض: عمود «سبب الرفض الفرعي» =================
+const REASON_KEY3 = 'mergeReasonMap';
+let reasonMap3 = {}; try { reasonMap3 = JSON.parse(localStorage.getItem(REASON_KEY3) || '{}') || {}; } catch(_) { reasonMap3 = {}; }
+const normAr = t => String(t || '').replace(/[\u064B-\u065F\u0640\s_\-:()]/g, '').replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي').toLowerCase();
+function lookupReason(report){ return reasonMap3[repKey3(report)] || reasonMap3['#' + tailKey3(report)] || ''; }
+function applyPairReason(p){ if (!p.reasonManual) p.reason = p.report ? lookupReason(p.report) : ''; }
+async function attachReasonSheet(file){
+  const note = document.getElementById('reasonNote');
+  note.hidden = false; note.textContent = 'جاري قراءة ملف أسباب الرفض...';
+  if (!window.ExcelJS){ note.textContent = '⚠️ مكتبة Excel غير محمّلة، تأكد من الاتصال بالإنترنت.'; return; }
+  const wb = new ExcelJS.Workbook();
+  try { await wb.xlsx.load(await file.arrayBuffer()); } catch (e) { note.textContent = '⚠️ تعذّرت قراءة الملف. تأكد أنه ملف Excel بصيغة xlsx.'; return; }
+  const found = {}; let total = 0, withR = 0; const info = [];
+  wb.eachSheet(ws => {
+    // صف العناوين: أول صف (من أول 10) فيه عمود سبب الرفض
+    let headRow = 0, reasonCol = 0, repCol = 0, best = 0;
+    for (let ri = 1; ri <= Math.min(10, ws.rowCount) && !headRow; ri++){
+      ws.getRow(ri).eachCell((c, ci) => {
+        const h = normAr(cellTexts3(c).join(' '));
+        const sc = h.includes('سببالرفضالفرعي') ? 3 : (h.includes('رفض') && h.includes('فرعي')) ? 2 : h.includes('سببالرفض') ? 1 : 0;
+        if (sc > best){ best = sc; reasonCol = ci; headRow = ri; }
+      });
+    }
+    if (!reasonCol) return;
+    // عمود رقم البلاغ: من العنوان، أو العمود الذي فيه أكثر أرقام بلاغات
+    const hits = {};
+    ws.getRow(headRow).eachCell((c, ci) => { if (/بلاغ|report|ticket|incident/i.test(cellTexts3(c).join(' '))) hits[ci] = (hits[ci] || 0) + 5; });
+    ws.eachRow((row, ri) => { if (ri > headRow && ri < headRow + 60) row.eachCell((c, ci) => { if (ci !== reasonCol && cellTexts3(c).some(t => repKey3(t))) hits[ci] = (hits[ci] || 0) + 1; }); });
+    for (const [ci, n] of Object.entries(hits)) if (n > (hits[repCol] || 0)) repCol = +ci;
+    if (!repCol) return;
+    const hdr = ci => `${numToCol(ci)} «${cellTexts3(ws.getRow(headRow).getCell(ci)).join(' ').trim()}»`;
+    info.push(`ورقة «${ws.name}»: رقم البلاغ في العمود ${hdr(repCol)} · سبب الرفض الفرعي في العمود ${hdr(reasonCol)}`);
+    ws.eachRow((row, ri) => {
+      if (ri <= headRow) return;
+      const repT = cellTexts3(row.getCell(repCol)).join(' '), key = repKey3(repT), tail = tailKey3(repT);
+      if (!key && !tail) return;
+      const reason = cellTexts3(row.getCell(reasonCol)).join(' ').trim();
+      total++; if (reason) withR++;
+      if (key) found[key] = reason;
+      if (tail) found['#' + tail] = reason;
+    });
+  });
+  if (!total){ note.textContent = '⚠️ لم أجد في الملف عمود «سبب الرفض الفرعي» مع عمود أرقام البلاغات.'; return; }
+  reasonMap3 = found; try { localStorage.setItem(REASON_KEY3, JSON.stringify(reasonMap3)); } catch(_) {}
+  let matched = 0;
+  pairs.forEach(p => { applyPairReason(p); if (p.reason) matched++; });
+  document.querySelectorAll('#cards .card').forEach(c => c.fieldsRefresh && c.fieldsRefresh());
+  note.textContent = `✓ ${file.name}\n` + info.join('\n') + `\nقُرئ ${total} بلاغ، منها ${withR} فيها سبب رفض.` +
+    (pairs.length ? ` رُبط سبب الرفض مع ${matched} من ${pairs.length} صورة مدموجة.` : ' سيُربط تلقائياً عند وصول الصور المدموجة.');
+}
+document.getElementById('reasonFileInput').onchange = async e => { const f = e.target.files[0]; e.target.value = ''; if (f) await attachReasonSheet(f); };
+if (Object.keys(reasonMap3).length){ const n = document.getElementById('reasonNote'); n.hidden = false; n.textContent = 'ملف أسباب الرفض المرفق سابقاً محفوظ وسيُستخدم تلقائياً. أرفق ملفاً جديداً لاستبداله.'; }
+
 const coordStr = c => c ? `${c.lat.toFixed(6)}, ${c.lon.toFixed(6)}` : '';
 const mapUrl = c => `https://www.google.com/maps?q=${c.lat},${c.lon}`;
 
@@ -2154,7 +2236,7 @@ function renderCards() {
 }
 
 const extraTitle = () => document.getElementById('extraTitle').value.trim() || 'إحداثيات الموقع (كتابة)';
-const showCoordsPdf = () => document.getElementById('showCoordsPdf').checked;
+const showLinkPdf = () => document.getElementById('showLinkPdf').checked;
 
 function makeCard(p, idx) {
   const card = document.createElement('div');
@@ -2182,6 +2264,7 @@ function makeCard(p, idx) {
     <div class="fields">
       <div class="fbox"><b>📍 الإحداثيات</b><input type="text" class="coord-in" inputmode="decimal" placeholder="21.283059, 40.377927"><span class="ci"></span></div>
       <div class="fbox"><b class="xt"></b><textarea class="extra-in" dir="ltr" placeholder="اكتب الإحداثيات هنا، مثال: 21.283059, 40.377927"></textarea></div>
+      <div class="fbox reason"><b>⛔ سبب الرفض الفرعي</b><input type="text" class="reason-in" placeholder="يُعبّأ تلقائياً من ملف أسباب الرفض، أو اكتبه هنا"><span class="ci rci"></span></div>
       <div class="fbox notes"><b>📝 الإفادة</b><textarea class="notes-in" placeholder="اكتب الإفادة هنا — تظهر في ملف PDF، ويبقى في PDF مكان قابل للكتابة"></textarea></div>
     </div>
   `;
@@ -2190,6 +2273,7 @@ function makeCard(p, idx) {
   reportIn.oninput = () => {
     p.report = reportIn.value.trim(); if (p.conflict) p.resolved = true;
     if (!p.coordManual) applyPairSite(p);
+    applyPairArea(p); applyPairReason(p);
     saveFields(p); fieldsRefresh(); refresh();
   };
 
@@ -2199,6 +2283,9 @@ function makeCard(p, idx) {
   extraIn.value = p.extra || ''; notesIn.value = p.notes || '';
   extraIn.oninput = () => { p.extra = extraIn.value; saveFields(p); };
   notesIn.oninput = () => { p.notes = notesIn.value; saveFields(p); };
+  const reasonIn = card.querySelector('.reason-in'), rci = card.querySelector('.rci');
+  reasonIn.oninput = () => { p.reason = reasonIn.value; p.reasonManual = true; saveFields(p); rci.textContent = 'مكتوب يدوياً'; };
+  reasonIn.onchange = () => { if (!reasonIn.value.trim()){ p.reasonManual = false; applyPairReason(p); saveFields(p); fieldsRefresh(); } };
   coordIn.onchange = () => {
     const v = coordIn.value.trim();
     if (!v){ p.coordManual = false; applyPairSite(p); }
@@ -2211,6 +2298,9 @@ function makeCard(p, idx) {
   };
   function fieldsRefresh(){
     card.querySelector('.xt').textContent = extraTitle();
+    if (document.activeElement !== reasonIn) reasonIn.value = p.reason || '';
+    rci.textContent = p.reasonManual ? 'مكتوب يدوياً' : p.reason ? 'من ملف أسباب الرفض' :
+      (Object.keys(reasonMap3).length ? (p.report ? 'لا يوجد سبب رفض لهذا البلاغ في الملف المرفق.' : '') : 'أرفق ملف أسباب الرفض من زر «📎 إرفاق ملف أسباب الرفض».');
     if (document.activeElement !== coordIn) coordIn.value = coordStr(p.coords);
     ci.className = 'ci'; ci.innerHTML = '';
     const anyMap = Object.keys(siteMap3).length > 0;
@@ -2223,6 +2313,12 @@ function makeCard(p, idx) {
     } else if (p.siteFound){
       ci.className = 'ci bad'; ci.textContent = '⚠ البلاغ موجود في الجدول لكن بدون رابط أو إحداثيات مقروءة.';
     } else ci.textContent = anyMap ? (p.report ? 'لم يُعثر على هذا البلاغ في الجدول المرفق. تقدر تكتب الإحداثيات يدوياً.' : 'اكتب رقم البلاغ أولاً.') : 'أرفق جدول البلاغات من زر «📎 إرفاق جدول البلاغات» أو اكتب الإحداثيات.';
+    // الحي والبلدية من جدول البلاغات
+    if (p.district || p.municipality){
+      const d = document.createElement('div'); d.style.cssText = 'color:#1f3b4d;font-weight:bold;margin-top:3px';
+      d.textContent = [p.district ? 'الحي: ' + p.district : '', p.municipality ? 'البلدية: ' + p.municipality : ''].filter(Boolean).join(' · ');
+      ci.appendChild(d);
+    }
   }
   card.fieldsRefresh = fieldsRefresh;
   fieldsRefresh();
@@ -2459,7 +2555,7 @@ function addPdfField(doc, name, x, y, w, h) {
   } catch (e) { console.warn('PDF field', e); }
 }
 
-// كل صورة مدموجة في صفحة: الملاحظات يمين الصفحة، والإحداثيات أسفل الصورة وبجوارها مربع بنفس المقاس
+// كل صورة مدموجة في صفحة: الإفادة عريضة في الأعلى، ومربعا الإحداثيات يسار الصورة
 async function exportPdf() {
   if (!pairs.length) return;
   const jsPDFCtor = window.jspdf && window.jspdf.jsPDF;
@@ -2486,18 +2582,18 @@ async function exportPdf() {
         c.fillText(`رقم البلاغ: ${p.report || '—'}`, W / 2, M + 40);
         top = M + 120;
       }
-      const CW = W - M * 2, notesW = Math.round(CW * 0.27), leftW = CW - notesW - GAP;
-      const notesX = W - M - notesW, leftX = M;
-      const imgH = H - M - top - BOXH - GAP;
+      const CW = W - M * 2, IFH = 860;            // مربع الإفادة عريض أعلى الصفحة
+      const imgTop = top + IFH + GAP, imgH = H - M - imgTop;
 
       // مربع بعنوان: يرجع منطقة المحتوى
-      const box = (x, y, w, h, title) => {
+      const box = (x, y, w, h, title, barH) => {
+        const bh = barH || BAR;
         c.fillStyle = '#ffffff'; c.fillRect(x, y, w, h);
         c.strokeStyle = '#1f3b4d'; c.lineWidth = 4; c.strokeRect(x, y, w, h);
-        c.fillStyle = '#1f3b4d'; c.fillRect(x, y, w, BAR);
-        c.fillStyle = '#ffffff'; c.font = `bold 46px ${FONT}`; c.textAlign = 'center'; c.direction = 'rtl';
-        c.fillText(title, x + w / 2, y + BAR / 2 + 2);
-        return { x: x + 24, y: y + BAR + 20, w: w - 48, h: h - BAR - 40, bottom: y + h - 16 };
+        c.fillStyle = '#1f3b4d'; c.fillRect(x, y, w, bh);
+        c.fillStyle = '#ffffff'; c.font = `bold ${Math.round(bh * 0.5)}px ${FONT}`; c.textAlign = 'center'; c.direction = 'rtl';
+        c.fillText(title, x + w / 2, y + bh / 2 + 2);
+        return { x: x + 20, y: y + bh + 16, w: w - 40, h: h - bh - 32, bottom: y + h - 14 };
       };
       // كتابة نص داخل منطقة (من اليمين)، يرجع آخر ارتفاع وصل له
       const writeIn = (area, text, size, color) => {
@@ -2507,54 +2603,109 @@ async function exportPdf() {
         return lines.length ? area.y + Math.min(lines.length, maxL) * lh : area.y;
       };
 
-      // الصورة المدموجة
-      const merged = mergeToCanvas(p, document.createElement('canvas'), 3000, mode);
-      c.fillStyle = '#f3f4f6'; c.fillRect(leftX, top, leftW, imgH);
-      const s = Math.min(leftW / merged.width, imgH / merged.height), dw = merged.width * s, dh = merged.height * s;
-      c.imageSmoothingEnabled = true; c.imageSmoothingQuality = 'high';
-      c.drawImage(merged, leftX + (leftW - dw) / 2, top + (imgH - dh) / 2, dw, dh);
-      c.strokeStyle = '#d1d5db'; c.lineWidth = 3; c.strokeRect(leftX, top, leftW, imgH);
-
-      // أسفل الصورة: الإحداثيات المستخرجة (يمين) وبجوارها مربع بنفس المقاس لكتابة الإحداثيات (يسار)
-      // إذا أُخفيت الإحداثيات المستخرجة يأخذ مربع الكتابة العرض كاملاً
-      const showC = showCoordsPdf();
-      const by = top + imgH + GAP, bw = showC ? (leftW - GAP) / 2 : leftW;
-      const coordX = leftX + bw + GAP, extraX = leftX;
-      const ca = showC ? box(coordX, by, bw, BOXH, '📍 الإحداثيات') : null;
-      if (!showC) {}
-      else if (p.coords) {
-        c.textAlign = 'center'; c.direction = 'rtl';
-        c.fillStyle = '#6b7280'; c.font = `36px ${FONT}`; c.fillText('خط العرض (Y)', coordX + bw * 0.75, ca.y + 30);
-        c.fillText('خط الطول (X)', coordX + bw * 0.25, ca.y + 30);
-        c.fillStyle = '#111827'; c.font = `bold 60px ${FONT}`; c.direction = 'ltr';
-        c.fillText(p.coords.lat.toFixed(6), coordX + bw * 0.75, ca.y + 110);
-        c.fillText(p.coords.lon.toFixed(6), coordX + bw * 0.25, ca.y + 110);
-        c.font = `40px ${FONT}`; c.fillStyle = '#374151';
-        c.fillText(coordStr(p.coords), coordX + bw / 2, ca.y + 210);
-        c.direction = 'rtl'; c.font = `bold 36px ${FONT}`; c.fillStyle = '#1d4ed8';
-        c.fillText('🗺 اضغط هنا لفتح الموقع في خرائط Google', coordX + bw / 2, ca.y + 290);
-      } else {
-        c.textAlign = 'center'; c.fillStyle = '#9ca3af'; c.font = `40px ${FONT}`;
-        c.fillText('لا توجد إحداثيات لهذا البلاغ', coordX + bw / 2, ca.y + ca.h / 2);
+      // 1) مربع الإفادة: بعرض الصفحة فوق الصورتين
+      const ifa = box(M, top, CW, IFH, '📝 الإفادة');
+      // 2) يسار الصورة: مربعا الإحداثيات بنفس المقاس فوق بعض
+      const cbW = 760, cbGap = 40, CBAR = 76;
+      const cbH = Math.round((imgH - cbGap) / 2);
+      const coordX = M, cbY = imgTop;                 // الإحداثيات المستخرجة (أعلى)
+      const extraX = M, extraY = imgTop + cbH + cbGap; // مربع كتابة الإحداثيات (أسفل)
+      const ca = box(coordX, cbY, cbW, cbH, '📍 الإحداثيات', CBAR);
+      const showL = showLinkPdf();
+      c.textAlign = 'center'; c.direction = 'rtl';
+      const hasArea = !!(p.district || p.municipality);
+      let mid = ca.y + ca.h / 2;
+      if (hasArea) {
+        // الحي والبلدية أعلى المربع
+        const fitTxt = (t, size, y) => { let z = size; do { c.font = `bold ${z}px ${FONT}`; z -= 2; } while (c.measureText(t).width > cbW - 50 && z > 22); c.fillText(t, coordX + cbW / 2, y); };
+        c.fillStyle = '#1f3b4d'; c.direction = 'rtl';
+        let ly = ca.y + 30;
+        if (p.district) { fitTxt('الحي: ' + p.district, 42, ly); ly += 62; }
+        if (p.municipality) { fitTxt('البلدية: ' + p.municipality, 42, ly); ly += 62; }
+        c.strokeStyle = '#cbd5e1'; c.lineWidth = 3; c.beginPath(); c.moveTo(coordX + 30, ly - 14); c.lineTo(coordX + cbW - 30, ly - 14); c.stroke();
+        mid = Math.max(mid, ly + 150);           // كتلة الإحداثيات تحت الحي والبلدية
       }
-      const ea = box(extraX, by, bw, BOXH, xTitle);
+      if (p.coords) {
+        c.fillStyle = '#6b7280'; c.font = `36px ${FONT}`; c.direction = 'rtl';
+        c.fillText('خط العرض (Y)', coordX + cbW * 0.75, mid - 120);
+        c.fillText('خط الطول (X)', coordX + cbW * 0.25, mid - 120);
+        c.fillStyle = '#111827'; c.font = `bold 58px ${FONT}`; c.direction = 'ltr';
+        c.fillText(p.coords.lat.toFixed(6), coordX + cbW * 0.75, mid - 50);
+        c.fillText(p.coords.lon.toFixed(6), coordX + cbW * 0.25, mid - 50);
+        c.font = `40px ${FONT}`; c.fillStyle = '#374151';
+        c.fillText(coordStr(p.coords), coordX + cbW / 2, mid + 35);
+        if (showL) {
+          c.direction = 'rtl'; c.font = `bold 34px ${FONT}`; c.fillStyle = '#1d4ed8';
+          c.fillText('🗺 اضغط لفتح الموقع في خرائط Google', coordX + cbW / 2, mid + 110);
+        }
+      } else {
+        c.fillStyle = '#9ca3af'; c.font = `38px ${FONT}`;
+        c.fillText('لا توجد إحداثيات لهذا البلاغ', coordX + cbW / 2, mid);
+      }
+      c.direction = 'rtl';
+      const ea = box(extraX, extraY, cbW, cbH, xTitle, CBAR);
       const eEnd = writeIn(ea, p.extra, 44);
 
-      // يمين الصفحة: الإفادة بطول الصفحة
-      const na = box(notesX, top, notesW, H - M - top, '📝 الإفادة');
-      const nEnd = writeIn(na, p.notes, 42);
+      // سبب الرفض الفرعي: أعلى يمين مربع الإفادة
+      const na = ifa;
+      let rbW = 0, rbBottom = ifa.y;
+      const reasonTxt = String(p.reason || '').trim();
+      if (reasonTxt) {
+        rbW = Math.round(ifa.w * 0.38);
+        c.font = `bold 40px ${FONT}`;
+        const rl = wrapText(c, reasonTxt, rbW - 40).slice(0, 5), RH = 62, RT = 64;
+        const rbH = RT + rl.length * RH + 24, rx = ifa.x + ifa.w - rbW, ry = ifa.y;
+        c.fillStyle = '#fff7ed'; c.fillRect(rx, ry, rbW, rbH);
+        c.strokeStyle = '#c2410c'; c.lineWidth = 4; c.strokeRect(rx, ry, rbW, rbH);
+        c.fillStyle = '#c2410c'; c.fillRect(rx, ry, rbW, RT);
+        c.fillStyle = '#ffffff'; c.font = `bold 38px ${FONT}`; c.textAlign = 'center'; c.direction = 'rtl';
+        c.fillText('سبب الرفض الفرعي', rx + rbW / 2, ry + RT / 2 + 2);
+        c.fillStyle = '#7c2d12'; c.font = `bold 40px ${FONT}`; c.textAlign = 'right';
+        rl.forEach((t, k) => c.fillText(t, rx + rbW - 20, ry + RT + 12 + RH * k + RH / 2));
+        rbBottom = ry + rbH;
+      }
+      // نص الإفادة: يسار مربع سبب الرفض، ثم بعرض المربع كاملاً تحته
+      let nEnd = ifa.y;
+      {
+        const size = 42, lh = Math.round(size * 1.5);
+        c.font = `${size}px ${FONT}`; c.fillStyle = '#111827'; c.direction = 'rtl'; c.textAlign = 'right';
+        const beside = yy => rbW && yy < rbBottom + 10;
+        const widthAt = yy => beside(yy) ? ifa.w - rbW - 30 : ifa.w;
+        let y = ifa.y;
+        const put = t => { if (y + lh > ifa.bottom) return false; c.fillText(t, ifa.x + ifa.w - (beside(y) ? rbW + 30 : 0), y + lh / 2); y += lh; return true; };
+        outer: for (const para of String(p.notes || '').split(/\r?\n/)) {
+          if (!para.trim()) { if (y + lh > ifa.bottom) break; y += lh; continue; }
+          let ln = '';
+          for (const w of para.split(/\s+/)) {
+            const t = ln ? ln + ' ' + w : w;
+            if (c.measureText(t).width > widthAt(y) && ln) { if (!put(ln)) break outer; ln = w; } else ln = t;
+          }
+          if (ln && !put(ln)) break;
+        }
+        nEnd = p.notes && p.notes.trim() ? y : ifa.y;
+      }
+
+      // 3) الصورة المدموجة يمين مربعي الإحداثيات
+      const ix = M + cbW + GAP, iw = CW - cbW - GAP;
+      const merged = mergeToCanvas(p, document.createElement('canvas'), 3000, mode);
+      c.fillStyle = '#f3f4f6'; c.fillRect(ix, imgTop, iw, imgH);
+      const s = Math.min(iw / merged.width, imgH / merged.height), dw = merged.width * s, dh = merged.height * s;
+      c.imageSmoothingEnabled = true; c.imageSmoothingQuality = 'high';
+      c.drawImage(merged, ix + (iw - dw) / 2, imgTop + (imgH - dh) / 2, dw, dh);
+      c.strokeStyle = '#d1d5db'; c.lineWidth = 3; c.strokeRect(ix, imgTop, iw, imgH);
 
       // إضافة الصفحة
       if (!doc) doc = new jsPDFCtor({ orientation: 'landscape', unit: 'mm', format: 'a4', compress: true });
       else doc.addPage('a4', 'landscape');
       doc.addImage(pc.toDataURL('image/jpeg', 0.92), 'JPEG', 0, 0, 297, 210, undefined, 'FAST');
 
-      // رابط الخرائط فوق مربع الإحداثيات
-      if (showC && p.coords) { try { doc.link(coordX * SC, by * SC, bw * SC, BOXH * SC, { url: mapUrl(p.coords) }); } catch (_) {} }
-      // حقول قابلة للكتابة داخل PDF: تحت ما كُتب في الإفادة، وفي مربع كتابة الإحداثيات
-      const nY = p.notes && p.notes.trim() ? nEnd + 20 : na.y;
+      // رابط الخرائط فوق مربع الإحداثيات (يُخفى إذا أُلغي خيار الرابط)
+      if (showL && p.coords) { try { doc.link(coordX * SC, cbY * SC, cbW * SC, cbH * SC, { url: mapUrl(p.coords) }); } catch (_) {} }
+      // حقول قابلة للكتابة داخل PDF: في الإفادة، وفي مربع كتابة الإحداثيات
+      // الحقل القابل للكتابة في الإفادة: تحت آخر سطر مكتوب
+      const nY = Math.max(p.notes && p.notes.trim() ? nEnd + 10 : na.y, rbW ? rbBottom + 12 : 0);
       addPdfField(doc, `ifada_${i + 1}`, na.x * SC, nY * SC, na.w * SC, (na.bottom - nY) * SC);
-      const eY = p.extra && p.extra.trim() ? eEnd + 15 : ea.y;
+      const eY = p.extra && p.extra.trim() ? eEnd + 12 : ea.y;
       addPdfField(doc, `coords_${i + 1}`, ea.x * SC, eY * SC, ea.w * SC, (ea.bottom - eY) * SC);
 
       await new Promise(r => setTimeout(r, 0));
@@ -2602,8 +2753,8 @@ document.getElementById('insertBtn').onclick = async () => {
   el.addEventListener(el.tagName === 'SELECT' ? 'change' : 'input', () => document.querySelectorAll('#cards .card').forEach(c => c.refresh()));
 });
 try { const v = localStorage.getItem('mergeExtraTitle'); if (v && v !== 'ملاحظات إضافية') document.getElementById('extraTitle').value = v; } catch(_) {}
-try { const v = localStorage.getItem('mergeShowCoords'); if (v !== null) document.getElementById('showCoordsPdf').checked = v === '1'; } catch(_) {}
-document.getElementById('showCoordsPdf').addEventListener('change', e => { try { localStorage.setItem('mergeShowCoords', e.target.checked ? '1' : '0'); } catch(_) {} });
+try { const v = localStorage.getItem('mergeShowLink'); if (v !== null) document.getElementById('showLinkPdf').checked = v === '1'; } catch(_) {}
+document.getElementById('showLinkPdf').addEventListener('change', e => { try { localStorage.setItem('mergeShowLink', e.target.checked ? '1' : '0'); } catch(_) {} });
 document.getElementById('extraTitle').addEventListener('input', () => {
   try { localStorage.setItem('mergeExtraTitle', document.getElementById('extraTitle').value); } catch(_) {}
   document.querySelectorAll('#cards .card').forEach(c => c.fieldsRefresh && c.fieldsRefresh());
@@ -2637,7 +2788,10 @@ async function exportXlsx() {
       { header: 'الصورة المدموجة', key: 'i', width: Math.round((anyH ? DISP_H : DISP_V) / 7) + 3 },
       { header: 'الإحداثيات', key: 'c', width: 26 },
       { header: extraTitle(), key: 'e', width: 30 },
-      { header: 'الإفادة', key: 'n', width: 40 }
+      { header: 'الإفادة', key: 'n', width: 40 },
+      { header: 'سبب الرفض الفرعي', key: 'rr', width: 34 },
+      { header: 'الحي', key: 'dd', width: 20 },
+      { header: 'البلدية', key: 'mm', width: 22 }
     ];
     ws.getRow(1).font = { bold: true, size: 13 };
     ws.getRow(1).alignment = { horizontal: 'center', vertical: 'middle' };
@@ -2660,6 +2814,9 @@ async function exportXlsx() {
       row.getCell(3).alignment = wrapC; row.getCell(3).font = { color: { argb: 'FF1D4ED8' }, underline: !!p.coords };
       row.getCell(4).value = p.extra || ''; row.getCell(4).alignment = { horizontal: 'right', vertical: 'top', wrapText: true };
       row.getCell(5).value = p.notes || ''; row.getCell(5).alignment = { horizontal: 'right', vertical: 'top', wrapText: true };
+      row.getCell(7).value = p.district || ''; row.getCell(8).value = p.municipality || '';
+      [7, 8].forEach(k => row.getCell(k).alignment = { horizontal: 'center', vertical: 'middle', wrapText: true });
+      row.getCell(6).value = p.reason || ''; row.getCell(6).alignment = { horizontal: 'right', vertical: 'top', wrapText: true };
 
       let w = p.direction === 'h' ? DISP_H : DISP_V;
       let h = w * canvas.height / canvas.width;
